@@ -4,7 +4,7 @@
 
 BioClaw brings bioinformatics tools to your fingertips — run BLAST searches, visualize protein structures with PyMOL, analyze genomic data, and search literature, all by messaging on WhatsApp. Designed for researchers who want quick access to computational biology workflows without switching to a terminal.
 
-Built on [NanoClaw](https://github.com/qwibitai/nanoclaw) + Claude Agent SDK. Each conversation runs in an isolated Docker container pre-loaded with bioinformatics tools.
+Built on [NanoClaw](https://github.com/qwibitai/nanoclaw) + [STELLA](https://github.com/zaixizhang/STELLA) + Claude Agent SDK. Each conversation runs in an isolated Docker container pre-loaded with bioinformatics tools.
 
 ## Why BioClaw?
 
