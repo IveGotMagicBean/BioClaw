@@ -37,6 +37,14 @@ RUN apt-get update && apt-get install -y \
     bwa \
     minimap2 \
     seqtk \
+    fastp \
+    bcftools \
+    seqkit \
+    pigz \
+    tabix \
+    sra-toolkit \
+    salmon \
+    kallisto \
     # --- Python for bio libraries ---
     python3 \
     python3-pip \
@@ -57,7 +65,8 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     scanpy \
     anndata \
     pysam \
-    requests
+    requests \
+    multiqc
 
 # Install PyMOL (headless) via apt
 RUN apt-get update && apt-get install -y \
