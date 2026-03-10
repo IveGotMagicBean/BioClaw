@@ -19,7 +19,15 @@ Built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) architecture with 
 
 </div>
 
----
+## Join WeChat Group
+
+Welcome to join our WeChat group to discuss and exchange ideas! Scan the QR code below to join:
+
+<p align="center">
+  <img src="wechat_group.jpg" width="50%" alt="WeChat Group QR Code"/>
+  <br/>
+  <em>Scan to join the Edit Banana community</em>
+</p>
 
 ## Contents
 
