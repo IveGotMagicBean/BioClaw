@@ -55,9 +55,20 @@ install https://github.com/Runchuan-BU/BioClaw
 <img src="docs/images/qq/qq-deepseek-2.jpg" width="420">
 </div>
 
+## 飞书（Lark）+ DeepSeek 示例
+
+以下为飞书（Lark）+ DeepSeek 工作流示例截图：
+
+<div align="center">
+<img src="docs/images/lark/lark-deepseek-1.jpg" width="420">
+</div>
+
+<div align="center">
+<img src="docs/images/lark/lark-deepseek-2.jpg" width="420">
+</div>
+
 ## Demo Examples
 
 完整示例任务与截图见：
 
 - [ExampleTask/ExampleTask.md](ExampleTask/ExampleTask.md)
-
