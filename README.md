@@ -223,7 +223,16 @@ The bioinformatics tool suite and domain-specific skills — including sequence 
 | **BWA** | Burrows-Wheeler short read aligner |
 | **minimap2** | Long read and assembly alignment |
 | **FastQC** | Sequencing quality control reports |
+| **fastp** | FASTQ filtering and trimming (QC/preprocessing) |
+| **MultiQC** | Aggregate QC reports into one summary |
 | **seqtk** | FASTA/FASTQ file manipulation |
+| **seqkit** | FASTA/FASTQ toolkit (extended) |
+| **BCFtools** | Variant calling and VCF/BCF manipulation |
+| **tabix** | Index/query compressed VCF/BED (bgzip/tabix) |
+| **pigz** | Parallel gzip compression/decompression |
+| **SRA Toolkit** | Download data from NCBI SRA (prefetch/fasterq-dump) |
+| **Salmon** | RNA-seq transcript quantification |
+| **kallisto** | RNA-seq transcript quantification |
 | **PyMOL** | Molecular visualization and rendering |
 
 ### Python Libraries
@@ -307,16 +316,6 @@ BioClaw builds upon the STELLA framework. If you use BioClaw in your research, p
   doi={10.1101/2025.07.01.662467}
 }
 ```
-
-## Related Projects
-
-- [STELLA](https://github.com/zaixizhang/STELLA) — Self-Evolving LLM Agent for Biomedical Research
-- [NanoClaw](https://github.com/qwibitai/nanoclaw) — Lightweight container-based agent architecture
-- [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-sdk) — Anthropic's SDK for building AI agents
-
-## Acknowledgments
-
-This project was developed in the **Le Cong Lab** at Stanford University and the **Mengdi Wang Lab** at Princeton University.
 
 ## License
 
