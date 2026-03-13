@@ -1,5 +1,5 @@
 <div align="center">
-<img src="bioclaw_logo1.jpg" width="200">
+<img src="bioclaw_logo.jpg" width="200">
 
 # BioClaw
 
@@ -64,6 +64,55 @@ npm start
 
 ```text
 @Bioclaw <你的请求>
+```
+
+## 频道配置
+
+BioClaw 支持多个聊天平台，通过 `.env` 环境变量启用。
+
+### WhatsApp（默认）
+
+无需额外配置。首次运行时终端会显示二维码，用 WhatsApp 扫描即可。认证状态保存在 `store/auth/`。
+
+### 企业微信（WeCom）
+
+1. 登录[企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)
+2. 进入 **应用与小程序** > **智能机器人** > **创建**
+3. 选择 **API 模式**，连接方式选 **使用长连接**（不是 URL 回调）
+4. 复制 **Bot ID** 和 **Secret**
+5. 添加到 `.env`：
+   ```
+   WECOM_BOT_ID=your-bot-id
+   WECOM_SECRET=your-secret
+   ```
+6. 在企业微信群里添加该机器人，@ 它即可开始对话
+
+**发送图片（可选）：** 需要在管理后台创建一个自建应用，并配置：
+```
+WECOM_CORP_ID=企业ID
+WECOM_AGENT_ID=应用AgentId
+WECOM_CORP_SECRET=应用Secret
+```
+服务器 IP 需加入应用的企业可信 IP 白名单。
+
+### Discord
+
+1. 打开 [Discord Developer Portal](https://discord.com/developers/applications)
+2. 点击 **New Application**，进入 **Bot** > **Add Bot**
+3. 开启 **MESSAGE CONTENT INTENT**（Privileged Gateway Intents 下）
+4. 复制 **Bot Token**，添加到 `.env`：
+   ```
+   DISCORD_BOT_TOKEN=your-bot-token
+   ```
+5. 进入 **OAuth2** > **URL Generator**，勾选 scope `bot`，权限选：发送消息、附加文件、阅读消息历史
+6. 打开生成的链接，将 bot 邀请到你的 Discord 服务器
+7. 在任意频道发消息，bot 自动注册并回复
+
+### 禁用某个频道
+
+如果只想用企业微信/Discord，不启动 WhatsApp：
+```
+DISABLE_WHATSAPP=1
 ```
 
 ### Second Quick Start

@@ -1,5 +1,5 @@
 <div align="center">
-<img src="bioclaw_logo1.jpg" width="200">
+<img src="bioclaw_logo.jpg" width="200">
 
 
 # BioClaw
@@ -84,10 +84,59 @@ npm start
 
 ### Usage
 
-In any WhatsApp group where BioClaw is connected, simply message:
+In any connected chat, simply message:
 
 ```
 @Bioclaw <your request>
+```
+
+## Channel Setup
+
+BioClaw supports multiple messaging platforms. Enable one or more by setting the corresponding environment variables in `.env`.
+
+### WhatsApp (Default)
+
+No credentials needed. On first run, a QR code is printed to the terminal — scan it with your WhatsApp app. Auth state is persisted in `store/auth/`.
+
+### WeCom (Enterprise WeChat)
+
+1. Log in to the [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/frame)
+2. Go to **Apps & Mini Programs** > **Smart Robots** > **Create**
+3. Select **API mode** with **Long Connection** (not Callback URL)
+4. Copy the **Bot ID** and **Secret**
+5. Add to `.env`:
+   ```
+   WECOM_BOT_ID=your-bot-id
+   WECOM_SECRET=your-secret
+   ```
+6. Add the bot to a group in WeCom, then `@` it to start chatting
+
+**Image sending (optional):** To send images in WeCom, create a self-built app in the admin console and configure:
+```
+WECOM_CORP_ID=your-corp-id
+WECOM_AGENT_ID=your-agent-id
+WECOM_CORP_SECRET=your-corp-secret
+```
+The server IP must be added to the app's trusted IP whitelist.
+
+### Discord
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click **New Application**, then go to **Bot** > **Add Bot**
+3. Enable **MESSAGE CONTENT INTENT** under Privileged Gateway Intents
+4. Copy the **Bot Token** and add to `.env`:
+   ```
+   DISCORD_BOT_TOKEN=your-bot-token
+   ```
+5. Go to **OAuth2** > **URL Generator**, select scope `bot`, grant permissions: Send Messages, Attach Files, Read Message History
+6. Open the generated URL to invite the bot to your Discord server
+7. Send a message in any channel — the bot auto-registers and responds
+
+### Disabling a Channel
+
+To run without WhatsApp (e.g., WeCom/Discord only):
+```
+DISABLE_WHATSAPP=1
 ```
 
 ## Second Quick Start
