@@ -27,7 +27,10 @@ interface IncomingPayload {
   chatJid?: string;
 }
 
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = Math.max(
+  1,
+  parseInt(process.env.LOCAL_WEB_MAX_UPLOAD_MB || '200', 10) * 1024 * 1024,
+);
 
 function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
   res.statusCode = statusCode;

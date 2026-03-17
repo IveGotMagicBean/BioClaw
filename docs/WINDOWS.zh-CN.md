@@ -53,6 +53,7 @@ ENABLE_WHATSAPP=false
 ENABLE_LOCAL_WEB=true
 LOCAL_WEB_HOST=127.0.0.1
 LOCAL_WEB_PORT=3210
+LOCAL_WEB_MAX_UPLOAD_MB=200
 
 MODEL_PROVIDER=openai-compatible
 OPENAI_COMPATIBLE_API_KEY=your_api_key
@@ -70,6 +71,8 @@ OPENAI_COMPATIBLE_MODEL=your-model-name
   - 只允许本机访问，更安全。
 - `LOCAL_WEB_PORT=3210`
   - 本地网页聊天端口，浏览器稍后会访问 `http://127.0.0.1:3210`。
+- `LOCAL_WEB_MAX_UPLOAD_MB=200`
+  - 本地网页聊天单文件上传上限，默认 200MB。
 - `MODEL_PROVIDER=openai-compatible`
   - 选择兼容 OpenAI 的模型接口。
 - `OPENAI_COMPATIBLE_API_KEY`
@@ -86,6 +89,7 @@ ENABLE_WHATSAPP=false
 ENABLE_LOCAL_WEB=true
 LOCAL_WEB_HOST=127.0.0.1
 LOCAL_WEB_PORT=3210
+LOCAL_WEB_MAX_UPLOAD_MB=200
 
 MODEL_PROVIDER=openrouter
 OPENROUTER_API_KEY=your_openrouter_key
@@ -138,6 +142,12 @@ Analyze DNA sequence ATGCGATCG and find ORFs
 ```
 
 网页聊天和 CLI 这两条路径都不依赖 WhatsApp，也不依赖 QQ / 飞书。
+
+## 大文件建议
+
+- 当前本地网页上传推荐控制在 200MB 以内。
+- 如果文件明显更大，建议先压缩、拆分，或者把文件放到共享目录/云盘后再把路径或下载链接发给 BioClaw。
+- 如果未来要稳定支持 1GB 以上甚至 2GB，建议改成流式上传，而不是继续提高当前这种一次性读入内存的上传上限。
 
 ## 为什么先推荐 CLI
 
