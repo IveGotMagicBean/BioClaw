@@ -9,8 +9,8 @@ export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP !== 'false';
 export const ENABLE_LOCAL_WEB = process.env.ENABLE_LOCAL_WEB === 'true';
-export const LOCAL_WEB_HOST = process.env.LOCAL_WEB_HOST || '127.0.0.1';
-export const LOCAL_WEB_PORT = parseInt(process.env.LOCAL_WEB_PORT || '3210', 10);
+export const LOCAL_WEB_HOST = process.env.LOCAL_WEB_HOST || 'localhost';
+export const LOCAL_WEB_PORT = parseInt(process.env.LOCAL_WEB_PORT || '3000', 10);
 export const LOCAL_WEB_GROUP_JID =
   process.env.LOCAL_WEB_GROUP_JID || 'local-web@local.web';
 export const LOCAL_WEB_GROUP_NAME =
@@ -18,6 +18,13 @@ export const LOCAL_WEB_GROUP_NAME =
 export const LOCAL_WEB_GROUP_FOLDER =
   process.env.LOCAL_WEB_GROUP_FOLDER || 'local-web';
 export const LOCAL_WEB_SECRET = process.env.LOCAL_WEB_SECRET || '';
+
+/** MolClaw-style observability: separate HTTP port + SSE (see docs/DASHBOARD.md) */
+export const ENABLE_DASHBOARD = process.env.ENABLE_DASHBOARD === 'true';
+export const DASHBOARD_HOST = process.env.DASHBOARD_HOST || 'localhost';
+export const DASHBOARD_PORT = parseInt(process.env.DASHBOARD_PORT || '8787', 10);
+/** If set, require Authorization: Bearer <token> or ?token= on dashboard routes */
+export const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();

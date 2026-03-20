@@ -20,6 +20,7 @@
 
 - [概览](#概览)
 - [快速开始](#快速开始)
+- [消息通道](#消息通道)
 - [示例演示](#示例演示)
 - [系统架构](#系统架构)
 - [内置工具](#内置工具)
@@ -37,13 +38,9 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 - 差异分析可视化（火山图等）
 - 文献检索与摘要
 
-默认通道为 WhatsApp；也可以扩展到 QQ / 飞书（Lark）并对接 DeepSeek。
+默认通道为 WhatsApp；企业微信、Discord、本地网页等配置见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**。QQ / 飞书相关截图为路线图示意，详见该文档。
 
 ## 快速开始
-
-> 说明：当前仓库中已经实现的消息通道是 WhatsApp。文档中的 QQ / 飞书截图展示的是扩展方向，不代表仓库里已经内置了可直接运行的 QQ / 飞书通道。
-
-> 现在也支持一个更适合 Windows 用户的本地网页聊天入口。若你在中国、或者暂时不想接 WhatsApp，可直接走 `HTTP webhook + 本地网页聊天`。
 
 ### 环境要求
 
@@ -58,7 +55,13 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 git clone https://github.com/Runchuan-BU/BioClaw.git
 cd BioClaw
 npm install
-npm start
+cp .env.example .env
+# 编辑 .env，至少配置模型提供方密钥（见下文）
+
+# 首次需要构建 Agent 镜像
+docker build -t bioclaw-agent:latest container/
+
+npm start   # WhatsApp：首次运行请在终端扫描二维码
 ```
 
 ### 模型提供方配置
@@ -114,58 +117,13 @@ npm run dev
 @Bioclaw <你的请求>
 ```
 
-如果你在 Windows 上、或者暂时不想通过 WhatsApp 使用，请先看 [docs/WINDOWS.zh-CN.md](docs/WINDOWS.zh-CN.md)。当前最稳妥的方式是 `WSL2 + Docker Desktop + npm run cli`。
+## 消息通道
 
-如果你想直接在浏览器里聊天，请在 `.env` 中设置 `ENABLE_WHATSAPP=false` 和 `ENABLE_LOCAL_WEB=true`，再执行 `npm run dev`，最后打开 [http://127.0.0.1:3210](http://127.0.0.1:3210)。
+各平台逐步配置、环境变量、本地网页与 **Windows（WSL2）** 说明见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**；其中 Windows 细节补充在 **[docs/WINDOWS.zh-CN.md](docs/WINDOWS.zh-CN.md)**。需要**本地浏览器（对话与实验追踪同一页）**时，在项目根目录执行 **`npm run web`** 即可（仍会读取 `.env`）。
 
-## 频道配置
+英文版通道文档：[docs/CHANNELS.md](docs/CHANNELS.md)。
 
-BioClaw 支持多个聊天平台，通过 `.env` 环境变量启用。
-
-### WhatsApp（默认）
-
-无需额外配置。首次运行时终端会显示二维码，用 WhatsApp 扫描即可。认证状态保存在 `store/auth/`。
-
-### 企业微信（WeCom）
-
-1. 登录[企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)
-2. 进入 **应用与小程序** > **智能机器人** > **创建**
-3. 选择 **API 模式**，连接方式选 **使用长连接**（不是 URL 回调）
-4. 复制 **Bot ID** 和 **Secret**
-5. 添加到 `.env`：
-   ```
-   WECOM_BOT_ID=your-bot-id
-   WECOM_SECRET=your-secret
-   ```
-6. 在企业微信群里添加该机器人，@ 它即可开始对话
-
-**发送图片（可选）：** 需要在管理后台创建一个自建应用，并配置：
-```
-WECOM_CORP_ID=企业ID
-WECOM_AGENT_ID=应用AgentId
-WECOM_CORP_SECRET=应用Secret
-```
-服务器 IP 需加入应用的企业可信 IP 白名单。
-
-### Discord
-
-1. 打开 [Discord Developer Portal](https://discord.com/developers/applications)
-2. 点击 **New Application**，进入 **Bot** > **Add Bot**
-3. 开启 **MESSAGE CONTENT INTENT**（Privileged Gateway Intents 下）
-4. 复制 **Bot Token**，添加到 `.env`：
-   ```
-   DISCORD_BOT_TOKEN=your-bot-token
-   ```
-5. 进入 **OAuth2** > **URL Generator**，勾选 scope `bot`，权限选：发送消息、附加文件、阅读消息历史
-6. 打开生成的链接，将 bot 邀请到你的 Discord 服务器
-7. 在任意频道发消息，bot 自动注册并回复
-
-### 禁用某个频道
-
-如果只想用企业微信/Discord，不启动 WhatsApp：
-```
-DISABLE_WHATSAPP=1
-```
+可选 **Lab trace 观测**（SSE 时间线、工作区树）：`.env` 中 `ENABLE_DASHBOARD=true`。与本地网页同时开启时与聊天**同一页**（`/`）；仅开观测面板时用独立 `DASHBOARD_PORT`。说明见 [docs/DASHBOARD.md](docs/DASHBOARD.md)。
 
 ### Second Quick Start
 
@@ -177,25 +135,7 @@ install https://github.com/Runchuan-BU/BioClaw
 
 ## 示例演示
 
-### QQ + DeepSeek 示例
-
-<div align="center">
-<img src="docs/images/qq/qq-deepseek-1.jpg" width="420">
-</div>
-
-<div align="center">
-<img src="docs/images/qq/qq-deepseek-2.jpg" width="420">
-</div>
-
-### 飞书（Lark）+ DeepSeek 示例
-
-<div align="center">
-<img src="docs/images/lark/lark-deepseek-1.jpg" width="420">
-</div>
-
-更多任务示例见 [ExampleTask/ExampleTask.md](ExampleTask/ExampleTask.md)。
-
-> 注意：上面的 QQ / 飞书图片目前是产品展示示例，不是仓库内现成可启用的接入实现。
+QQ / 飞书路线图示意截图已移至 [docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)。任务类演示见 [ExampleTask/ExampleTask.md](ExampleTask/ExampleTask.md)。
 
 ## 系统架构
 
@@ -240,10 +180,15 @@ BioClaw 基于 NanoClaw 的容器化架构，并融合 STELLA 的生物医学能
 
 ```text
 BioClaw/
-├── src/              # Node.js 编排器
-├── container/        # Agent 镜像与运行器
-├── ExampleTask/      # Demo 任务与截图
-├── docs/images/      # 文档图片资源
+├── src/                   # Node.js 编排器
+├── container/             # Agent 镜像与运行器
+├── groups/                # 各群工作区与 CLAUDE.md
+├── docs/
+│   ├── CHANNELS.md        # 消息通道（英文）
+│   ├── CHANNELS.zh-CN.md  # 消息通道（中文）
+│   ├── WINDOWS.zh-CN.md   # Windows / 本地网页
+│   └── images/            # 文档配图
+├── ExampleTask/           # Demo 任务与截图
 └── README.md / README.zh-CN.md
 ```
 

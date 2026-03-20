@@ -4,14 +4,16 @@ import {
   _initTestDatabase,
   createTask,
   deleteTask,
+  getAgentTraceEvents,
   getAllChats,
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  insertAgentTraceEvent,
   storeChatMetadata,
   storeMessage,
   updateTask,
-} from './db.js';
+} from './db/index.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -311,5 +313,48 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+});
+
+describe('agent_trace_events', () => {
+  it('inserts and lists by group', () => {
+    insertAgentTraceEvent({
+      group_folder: 'local-web',
+      chat_jid: 'x@local.web',
+      session_id: 'sess-1',
+      type: 'run_start',
+      payload: { n: 1 },
+    });
+    insertAgentTraceEvent({
+      group_folder: 'main',
+      type: 'ipc_send',
+      payload: { kind: 'text' },
+    });
+    const all = getAgentTraceEvents({ limit: 10 });
+    expect(all.length).toBe(2);
+    const local = getAgentTraceEvents({ group_folder: 'local-web', limit: 10 });
+    expect(local).toHaveLength(1);
+    expect(local[0].type).toBe('run_start');
+    expect(JSON.parse(local[0].payload)).toEqual({ n: 1 });
+  });
+
+  it('omits types when omit_types is set', () => {
+    insertAgentTraceEvent({
+      group_folder: 'omit-test',
+      type: 'stream_output',
+      payload: { x: 1 },
+    });
+    insertAgentTraceEvent({
+      group_folder: 'omit-test',
+      type: 'run_end',
+      payload: { ok: true },
+    });
+    const filtered = getAgentTraceEvents({
+      group_folder: 'omit-test',
+      limit: 10,
+      omit_types: ['stream_output'],
+    });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].type).toBe('run_end');
   });
 });

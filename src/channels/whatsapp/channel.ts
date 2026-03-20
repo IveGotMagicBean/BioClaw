@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 
 import makeWASocket, {
-  Browsers,
   DisconnectReason,
   WASocket,
   WAMessage,
@@ -12,15 +11,15 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { GROUPS_DIR, STORE_DIR } from '../config.js';
+import { GROUPS_DIR, STORE_DIR } from '../../config.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
   updateChatName,
-} from '../db.js';
-import { logger } from '../logger.js';
-import { getWhatsAppBrowser, notifyAuthRequired } from '../platform.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+} from '../../db/index.js';
+import { logger } from '../../logger.js';
+import { getWhatsAppBrowser, notifyAuthRequired } from '../../platform.js';
+import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -77,6 +76,9 @@ export class WhatsAppChannel implements Channel {
       printQRInTerminal: false,
       logger,
       browser: getWhatsAppBrowser('Chrome'),
+      // Disable history sync to avoid 20s AwaitingInitialSync timeout and "forcing state to Online" WARN.
+      // Bot mainly handles new messages; history sync can block startup on slow networks.
+      shouldSyncHistoryMessage: () => false,
     });
 
     this.sock.ev.on('connection.update', (update) => {

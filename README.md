@@ -33,6 +33,7 @@ Welcome to join our WeChat group to discuss and exchange ideas! Scan the QR code
 
 - [Overview](#overview)
 - [Quick Start](#quick-start)
+- [Messaging channels](#messaging-channels)
 - [Demo Examples](#demo-examples)
 - [System Architecture](#system-architecture)
 - [Included Tools](#included-tools)
@@ -74,7 +75,13 @@ cd BioClaw
 # Install dependencies
 npm install
 
-# Start BioClaw
+# Configure environment (edit with your API keys — see model section below)
+cp .env.example .env
+
+# First time only: build the agent Docker image
+docker build -t bioclaw-agent:latest container/
+
+# Start BioClaw (WhatsApp: scan the QR code printed in the terminal on first run)
 npm start
 ```
 
@@ -131,54 +138,11 @@ In any connected chat, simply message:
 @Bioclaw <your request>
 ```
 
-## Channel Setup
+## Messaging channels
 
-BioClaw supports multiple messaging platforms. Enable one or more by setting the corresponding environment variables in `.env`.
+Supported platforms include **WhatsApp** (default), **WeCom**, **Discord**, **Slack** (Socket Mode), and optional **local web** (browser) chat. Full setup steps, env vars, and disabling channels are in **[docs/CHANNELS.md](docs/CHANNELS.md)** (简体中文：[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)).
 
-### WhatsApp (Default)
-
-No credentials needed. On first run, a QR code is printed to the terminal — scan it with your WhatsApp app. Auth state is persisted in `store/auth/`.
-
-### WeCom (Enterprise WeChat)
-
-1. Log in to the [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/frame)
-2. Go to **Apps & Mini Programs** > **Smart Robots** > **Create**
-3. Select **API mode** with **Long Connection** (not Callback URL)
-4. Copy the **Bot ID** and **Secret**
-5. Add to `.env`:
-   ```
-   WECOM_BOT_ID=your-bot-id
-   WECOM_SECRET=your-secret
-   ```
-6. Add the bot to a group in WeCom, then `@` it to start chatting
-
-**Image sending (optional):** To send images in WeCom, create a self-built app in the admin console and configure:
-```
-WECOM_CORP_ID=your-corp-id
-WECOM_AGENT_ID=your-agent-id
-WECOM_CORP_SECRET=your-corp-secret
-```
-The server IP must be added to the app's trusted IP whitelist.
-
-### Discord
-
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
-2. Click **New Application**, then go to **Bot** > **Add Bot**
-3. Enable **MESSAGE CONTENT INTENT** under Privileged Gateway Intents
-4. Copy the **Bot Token** and add to `.env`:
-   ```
-   DISCORD_BOT_TOKEN=your-bot-token
-   ```
-5. Go to **OAuth2** > **URL Generator**, select scope `bot`, grant permissions: Send Messages, Attach Files, Read Message History
-6. Open the generated URL to invite the bot to your Discord server
-7. Send a message in any channel — the bot auto-registers and responds
-
-### Disabling a Channel
-
-To run without WhatsApp (e.g., WeCom/Discord only):
-```
-DISABLE_WHATSAPP=1
-```
+Optional **Lab trace dashboard** (SSE timeline, workspace tree): set `ENABLE_DASHBOARD=true`. With **local web** enabled it is served on the same port at **`/dashboard`**; otherwise it uses **`DASHBOARD_PORT`** on its own. See **[docs/DASHBOARD.md](docs/DASHBOARD.md)**.
 
 ## Second Quick Start
 
@@ -337,59 +301,19 @@ The bioinformatics tool suite and domain-specific skills — including sequence 
 | **scanpy** | Single-cell RNA-seq analysis |
 | **pysam** | SAM/BAM file access from Python |
 
-## Quick Start
-
-### Prerequisites
-
-- macOS or Linux
-- Node.js 20+
-- Docker Desktop
-- Anthropic API key
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/Runchuan-BU/BioClaw.git
-cd BioClaw
-
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Anthropic API key
-
-# Build the agent Docker image
-docker build -t bioclaw-agent:latest container/
-
-# Start BioClaw (scan the QR code with WhatsApp on first run)
-npm start
-```
-
-### Usage
-
-In any WhatsApp group where BioClaw is connected, simply message:
-
-```
-@Bioclaw <your request>
-```
-
-See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use demo prompts with expected outputs.
-
 ## Project Structure
 
 ```
 BioClaw/
+├── src/                       # Node orchestrator
+├── container/                 # Agent image + runner
+├── groups/                    # Per-group workspace & CLAUDE.md
+├── docs/
+│   ├── CHANNELS.md            # Messaging platform setup (EN)
+│   ├── CHANNELS.zh-CN.md      # Messaging platform setup (ZH)
+│   └── images/                # Doc screenshots
+├── ExampleTask/               # Demo prompts + screenshots
 ├── bioclaw_logo.jpg           # Project logo
-├── ExampleTask/
-│   ├── ExampleTask.md         # 6 demo prompts with descriptions
-│   ├── 1.jpg                  # Workspace triage demo
-│   ├── 2.jpg                  # PubMed search demo
-│   ├── 3.jpg                  # Protein structure demo
-│   ├── 4.jpg                  # BLAST search demo
-│   ├── 5.jpg                  # FastQC QC demo
-│   └── 6.jpg                  # Volcano plot demo
 └── README.md
 ```
 

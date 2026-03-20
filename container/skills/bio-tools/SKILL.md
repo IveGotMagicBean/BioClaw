@@ -7,6 +7,8 @@ description: Biology research tools reference. Always available inside agent con
 
 You are running inside a BioClaw container with the following biology tools pre-installed.
 
+**Layout:** Runnable plot/PyMOL scripts live under `templates/` (synced to `/home/node/.claude/skills/bio-tools/templates/`).
+
 ## Quick Reference
 
 ### Sequence Search
@@ -113,13 +115,13 @@ Prefer these built-in scripts when creating common BioClaw figures, instead of w
 Path:
 
 ```bash
-/home/node/.claude/skills/bio-tools/volcano_plot_template.py
+/home/node/.claude/skills/bio-tools/templates/volcano_plot_template.py
 ```
 
 Example:
 
 ```bash
-python /home/node/.claude/skills/bio-tools/volcano_plot_template.py \
+python /home/node/.claude/skills/bio-tools/templates/volcano_plot_template.py \
   --input /workspace/group/counts.csv \
   --output /workspace/group/volcano_plot.png \
   --title "Differential Expression Volcano Plot"
@@ -131,13 +133,13 @@ Expected columns by default: `gene`, `log2FC`, `pvalue`
 Path:
 
 ```bash
-/home/node/.claude/skills/bio-tools/qc_summary_plot_template.py
+/home/node/.claude/skills/bio-tools/templates/qc_summary_plot_template.py
 ```
 
 Example:
 
 ```bash
-python /home/node/.claude/skills/bio-tools/qc_summary_plot_template.py \
+python /home/node/.claude/skills/bio-tools/templates/qc_summary_plot_template.py \
   --input /workspace/group/qc_metrics.csv \
   --output /workspace/group/qc_summary.png \
   --title "Sequencing QC Summary"
@@ -151,20 +153,20 @@ Useful metric columns: `total_reads`, `q30_pct`, `gc_pct`, `duplication_pct`
 Path:
 
 ```bash
-/home/node/.claude/skills/bio-tools/pymol_render_template.py
+/home/node/.claude/skills/bio-tools/templates/pymol_render_template.py
 ```
 
 Examples:
 
 ```bash
-python /home/node/.claude/skills/bio-tools/pymol_render_template.py \
+python /home/node/.claude/skills/bio-tools/templates/pymol_render_template.py \
   --input 1M17 \
   --output /workspace/group/1m17_render.png \
   --highlight-selection "resn AQ4"
 ```
 
 ```bash
-python /home/node/.claude/skills/bio-tools/pymol_render_template.py \
+python /home/node/.claude/skills/bio-tools/templates/pymol_render_template.py \
   --input /workspace/group/structure.pdb \
   --output /workspace/group/structure_render.png \
   --style cartoon

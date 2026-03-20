@@ -10,8 +10,9 @@ import {
   MAIN_GROUP_FOLDER,
   TIMEZONE,
 } from './config.js';
-import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { recordAgentTraceEvent } from './agent-trace.js';
+import { AvailableGroup } from './group-folder.js';
+import { createTask, deleteTask, getTaskById, updateTask } from './db/index.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -83,6 +84,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     data.chatJid,
                     `${ASSISTANT_NAME}: ${data.text}`,
                   );
+                  recordAgentTraceEvent({
+                    group_folder: sourceGroup,
+                    chat_jid: data.chatJid,
+                    session_id: null,
+                    type: 'ipc_send',
+                    payload: {
+                      kind: 'text',
+                      length: data.text.length,
+                      preview: String(data.text).slice(0, 200),
+                    },
+                  });
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -102,6 +114,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   const hostImagePath = path.join(ipcBaseDir, sourceGroup, data.filePath);
                   if (fs.existsSync(hostImagePath)) {
                     await deps.sendImage(data.chatJid, hostImagePath, data.caption);
+                    recordAgentTraceEvent({
+                      group_folder: sourceGroup,
+                      chat_jid: data.chatJid,
+                      session_id: null,
+                      type: 'ipc_send',
+                      payload: {
+                        kind: 'image',
+                        filePath: data.filePath,
+                        caption: data.caption ?? null,
+                      },
+                    });
                     logger.info(
                       { chatJid: data.chatJid, sourceGroup, filePath: data.filePath },
                       'IPC image sent',

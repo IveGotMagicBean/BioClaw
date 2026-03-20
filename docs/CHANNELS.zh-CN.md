@@ -1,0 +1,157 @@
+# 消息通道配置
+
+BioClaw 支持多种聊天平台，通过在项目根目录的 `.env` 中设置环境变量启用。
+
+- **Windows 用户**（WSL2、本地网页、暂不接 WhatsApp）：优先阅读 [WINDOWS.zh-CN.md](WINDOWS.zh-CN.md)。
+- **环境变量模板**：根目录 `.env.example`；纯本地网页可参考 `config-examples/.env.local-web.example`。
+
+---
+
+## WhatsApp（默认）
+
+无需在 `.env` 里填密钥。首次运行时在终端扫描二维码，用 WhatsApp 登录即可。认证状态保存在 `store/auth/`。
+
+若只想用其他通道、不启动 WhatsApp：
+
+```bash
+DISABLE_WHATSAPP=1
+```
+
+或：
+
+```bash
+ENABLE_WHATSAPP=false
+```
+
+---
+
+## 企业微信（WeCom）
+
+1. 登录[企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)。
+2. **应用与小程序** → **智能机器人** → **创建**。
+3. 选择 **API 模式**，连接方式选 **长连接**（不要用 URL 回调）。
+4. 将 **Bot ID** 和 **Secret** 写入 `.env`：
+
+   ```bash
+   WECOM_BOT_ID=your-bot-id
+   WECOM_SECRET=your-secret
+   ```
+
+5. 在群里添加该机器人，`@` 它即可对话。
+
+**发送图片（可选）：** 在管理后台创建自建应用，并配置：
+
+```bash
+WECOM_CORP_ID=企业ID
+WECOM_AGENT_ID=应用 AgentId
+WECOM_CORP_SECRET=应用 Secret
+```
+
+服务器 IP 需加入该应用的**企业可信 IP**白名单。
+
+---
+
+## Discord
+
+1. 打开 [Discord Developer Portal](https://discord.com/developers/applications)。
+2. **New Application** → **Bot** → **Add Bot**。
+3. 在 **Privileged Gateway Intents** 下开启 **MESSAGE CONTENT INTENT**。
+4. 将 **Bot Token** 写入 `.env`：
+
+   ```bash
+   DISCORD_BOT_TOKEN=your-bot-token
+   ```
+
+5. **OAuth2** → **URL Generator**：勾选 scope `bot`，权限包含发送消息、附加文件、阅读消息历史等。
+6. 用生成链接把 bot 邀请进服务器。
+7. 在频道里发消息，bot 会自动注册并可以回复。
+
+---
+
+## Slack（Socket Mode）
+
+BioClaw 使用 **[Socket Mode](https://api.slack.com/apis/socket-mode)** 长连接，**不需要**公网 HTTPS 回调地址。
+
+1. 在 **[api.slack.com/apps](https://api.slack.com/apps)** 创建 App。
+2. 打开 **Socket Mode** → 开启 → **生成 App-Level Token**，权限勾选 **`connections:write`**，得到 `xapp-...`。
+3. **OAuth & Permissions** → **Bot Token Scopes** 至少添加：
+   - `channels:history`、`groups:history`、`im:history`、`mpim:history`（读消息）
+   - `chat:write`（回复）
+   - `files:write`（发图片，建议）
+   - `users:read`（显示名）
+   - `channels:read`（频道信息，可选）
+4. **Install to Workspace**，复制 **Bot User OAuth Token**（`xoxb-...`）。
+5. **Event Subscriptions** → 启用并订阅 bot 事件：**`message`**，或分别订阅 `message.channels` / `message.groups` / `message.im` / `message.mpim`（以控制台界面为准）。
+6. 把 App 邀请进频道（`/invite @你的App`）或与其私聊。
+7. 写入 `.env`：
+
+   ```bash
+   SLACK_BOT_TOKEN=xoxb-your-bot-token
+   SLACK_APP_TOKEN=xapp-your-app-token
+   ```
+
+重启 BioClaw 后，在某个会话里发第一条消息会自动注册该会话（与 Discord 类似）。
+
+---
+
+## 本地网页聊天（浏览器）
+
+适合暂时不用 WhatsApp、在浏览器里本地验证的场景。
+
+1. 可选：在 `.env` 里设 `ENABLE_WHATSAPP=false`（若只想用浏览器通道）；其它变量见 `config-examples/.env.local-web.example`。
+
+2. **一条命令启动带网页的服务：**
+
+   ```bash
+   npm run web
+   ```
+
+   会启用 **`ENABLE_LOCAL_WEB`** 与 **`ENABLE_DASHBOARD`**：**对话与实验追踪在同一页**（`/`；窄屏顶部 Tab；**宽屏左侧为实验追踪 / 工作流时间线，右侧为对话**），并照常读取 `.env`（模型密钥、其它通道等）。
+
+   若你已在 `.env` 里写好这两项，用 `npm run dev` 效果相同。
+
+3. 浏览器打开 **`http://localhost:3000/`**（或你配置的 `LOCAL_WEB_HOST` / `LOCAL_WEB_PORT`）。
+
+释放端口：**`npm run stop:web`**。仅打开浏览器、不启动服务可用 **`npm run open:web`**。
+
+页面为**实验室风格**：消息走 **SSE**（`/api/events`），失败时回退轮询。开启 **`ENABLE_DASHBOARD=true`** 时，**实验追踪**与聊天**同一地址**（顶部 **实验追踪** Tab 在 **对话** 左侧；宽屏**左栏追踪、右栏聊天**），**`/dashboard`** 会重定向到 **`/?tab=trace`**。**设置**（齿轮）可切换语言与主题，说明见 [DASHBOARD.md](DASHBOARD.md)。
+
+### 对话消息 vs 实验追踪（数据格式）
+
+- **对话（`messages` 表、`/api/messages`）**：每条是常规消息，**`content` 为纯文本**（用户与助手看到的正文）。**没有**用于「同步更新」的固定 JSON 协议；网页端可对内容做 Markdown 渲染。上传文件等特殊展示依赖**纯文本行**前缀（如 `Uploaded file:`、`Workspace path:`、`Preview URL:`），由前端解析。
+- **实验追踪（`agent_trace_events`、`/api/trace/list`）**：每条有 **`type`**（如 `run_start`、`stream_output`、`run_end`、`run_error`、`container_spawn`、`ipc_send`）和 **`payload` JSON**（库内以 JSON 文本存储），用于**可观测性**，不是聊天协议。合并页默认带 **`compact=1`**，会隐藏刷屏的 `stream_output`，需要时在界面勾选「显示流式片段」。
+
+可选：`LOCAL_WEB_SECRET` 为 webhook 设置共享密钥。
+
+更详细的 Windows 步骤见 [WINDOWS.zh-CN.md](WINDOWS.zh-CN.md)。
+
+---
+
+## 禁用或组合使用
+
+- 只关 WhatsApp：`DISABLE_WHATSAPP=1` 或 `ENABLE_WHATSAPP=false`。
+- 不用的通道：对应 token 留空或不配置即可（含 Slack 需同时配置 `SLACK_BOT_TOKEN` 与 `SLACK_APP_TOKEN`）。
+
+---
+
+## QQ / 飞书（Lark）说明（路线图）
+
+以下截图用于展示**产品扩展方向**；当前仓库内**没有**可直接启用的 QQ / 飞书通道实现，请勿按 QQ/飞书文档期待开箱即用。
+
+### QQ + DeepSeek（示意）
+
+<div align="center">
+<img src="images/qq/qq-deepseek-1.jpg" width="420" alt="QQ DeepSeek demo 1">
+</div>
+
+<div align="center">
+<img src="images/qq/qq-deepseek-2.jpg" width="420" alt="QQ DeepSeek demo 2">
+</div>
+
+### 飞书（Lark）+ DeepSeek（示意）
+
+<div align="center">
+<img src="images/lark/lark-deepseek-1.jpg" width="420" alt="Lark DeepSeek demo">
+</div>
+
+任务类演示仍见 [ExampleTask/ExampleTask.md](../ExampleTask/ExampleTask.md)。
