@@ -60,7 +60,7 @@ Results — including images, plots, and structured reports — are delivered di
 
 ### Prerequisites
 
-- macOS or Linux
+- **macOS / Linux / Windows** (Windows requires PowerShell 5.1+)
 - Node.js 20+
 - Docker Desktop
 - Anthropic API key or OpenRouter API key
@@ -69,11 +69,27 @@ Results — including images, plots, and structured reports — are delivered di
 
 **One-command setup** (recommended for first-time users):
 
+<details>
+<summary><b>macOS / Linux</b></summary>
+
 ```bash
 git clone https://github.com/Runchuan-BU/BioClaw.git
 cd BioClaw
-bash setup.sh
+bash scripts/setup.sh
 ```
+
+</details>
+
+<details>
+<summary><b>Windows (PowerShell)</b></summary>
+
+```powershell
+git clone https://github.com/Runchuan-BU/BioClaw.git
+cd BioClaw
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+</details>
 
 The setup script will check prerequisites, install dependencies, build the Docker image, and walk you through API key configuration interactively.
 
@@ -310,7 +326,8 @@ All utility scripts are in the `scripts/` directory:
 
 | Command | Script | Description |
 |---------|--------|-------------|
-| `bash setup.sh` | `scripts/setup.sh` | One-command setup: checks Node.js, installs deps, builds Docker image, configures `.env` |
+| `bash scripts/setup.sh` | `scripts/setup.sh` | One-command setup for macOS/Linux |
+| `powershell scripts\setup.ps1` | `scripts/setup.ps1` | One-command setup for Windows |
 | `npm run web` | `scripts/start-web.mjs` | Start BioClaw with local web UI (chat + lab trace) |
 | `npm run open:web` | `scripts/open-local-web.mjs` | Open the web UI in default browser |
 | `npm run stop:web` | `scripts/stop-bioclaw-web.mjs` | Stop the web server process |
