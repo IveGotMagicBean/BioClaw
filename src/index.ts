@@ -8,6 +8,7 @@ import { execSync } from 'child_process';
 import {
   ASSISTANT_NAME,
   ENABLE_LOCAL_WEB,
+  ENABLE_WECHAT,
   ENABLE_WHATSAPP,
   FEISHU_APP_ID,
   FEISHU_APP_SECRET,
@@ -57,6 +58,7 @@ import { WhatsAppChannel } from './channels/whatsapp/channel.js';
 import { WeComChannel } from './channels/wecom.js';
 import { DiscordChannel } from './channels/discord.js';
 import { SlackChannel } from './channels/slack.js';
+import { WeChatChannel } from './channels/wechat.js';
 import { Channel, NewMessage } from './types.js';
 import { logger } from './logger.js';
 
@@ -289,6 +291,12 @@ async function main(): Promise<void> {
     whatsapp = new WhatsAppChannel(channelCallbacks);
     channels.push(whatsapp);
     await whatsapp.connect();
+  }
+
+  if (ENABLE_WECHAT) {
+    const wechat = new WeChatChannel(channelCallbacks);
+    channels.push(wechat);
+    try { await wechat.connect(); } catch (err) { logger.error({ err }, 'WeChat connection failed'); }
   }
 
   if (process.env.DISCORD_BOT_TOKEN) {
