@@ -84,7 +84,7 @@ git clone https://github.com/Runchuan-BU/BioClaw.git
 cd BioClaw
 npm install
 cp .env.example .env        # Edit with your API keys (see model section below)
-docker build -t bioclaw-agent:latest container/
+docker build --no-cache -t bioclaw-agent:latest container/ # uncomment Dockerfile image source if you meet 100 errors.
 npm start
 ```
 
