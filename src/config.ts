@@ -8,6 +8,8 @@ export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Bioclaw';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP !== 'false';
+export const ALLOW_WHATSAPP_SELF_MESSAGES =
+  process.env.ALLOW_WHATSAPP_SELF_MESSAGES === 'true';
 export const ENABLE_LOCAL_WEB = process.env.ENABLE_LOCAL_WEB === 'true';
 export const LOCAL_WEB_HOST = process.env.LOCAL_WEB_HOST || 'localhost';
 export const LOCAL_WEB_PORT = parseInt(process.env.LOCAL_WEB_PORT || '3000', 10);
@@ -18,6 +20,9 @@ export const LOCAL_WEB_GROUP_NAME =
 export const LOCAL_WEB_GROUP_FOLDER =
   process.env.LOCAL_WEB_GROUP_FOLDER || 'local-web';
 export const LOCAL_WEB_SECRET = process.env.LOCAL_WEB_SECRET || '';
+export const QQ_APP_ID = process.env.QQ_APP_ID || '';
+export const QQ_CLIENT_SECRET = process.env.QQ_CLIENT_SECRET || '';
+export const QQ_SANDBOX = process.env.QQ_SANDBOX === 'true';
 export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 export const FEISHU_CONNECTION_MODE =
