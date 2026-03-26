@@ -18,9 +18,10 @@
 Built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) architecture with bioinformatics tools and skills from the [STELLA](https://github.com/zaixizhang/STELLA) project, powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-sdk).
 
 <p align="center">
-  New BioClaw-compatible skills are first contributed to <a href="https://github.com/zongtingwei/Bioclaw_Skills_Hub">Bioclaw_Skills_Hub</a>, where they can be iterated and tested before being promoted into the main BioClaw repository. If you want to contribute new skills, please submit them there first. Skills that prove useful and stable in practice may later be integrated into BioClaw itself. To get newly promoted skills and updates from BioClaw, pull the latest version of this repository with <code>git pull</code>.
+  New BioClaw-compatible skills can be developed either directly in BioClaw or in <a href="https://github.com/zongtingwei/Bioclaw_Skills_Hub">Bioclaw_Skills_Hub</a>, which can serve as a staging space for early iteration and testing before useful skills are promoted into the main BioClaw repository. Skills that prove practical and stable may later be integrated into BioClaw itself. To get newly promoted skills and other updates from BioClaw, pull the latest version of this repository with <code>git pull</code>.
 </p>
 </div>
+
 
 ## Join WeChat Group
 
