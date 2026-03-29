@@ -7,7 +7,7 @@
 
 <h3>🌐 <a href="https://ivegotmagicbean.github.io/BioClaw-Page/">Visit Project Homepage</a></h3>
 
-### AI-Powered Bioinformatics Research Assistant on WhatsApp
+### AI-Powered Bioinformatics Research Assistant
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
