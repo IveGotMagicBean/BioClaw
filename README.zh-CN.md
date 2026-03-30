@@ -1,5 +1,7 @@
 <div align="center">
+<a href="https://ivegotmagicbean.github.io/BioClaw-Page/">
 <img src="bioclaw_logo.jpg" width="200">
+</a>
 
 # BioClaw
 
@@ -9,17 +11,40 @@
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/Runchuan-BU/BioClaw)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Runchuan-BU/BioClaw/blob/main/LICENSE)
+[![Homepage](https://img.shields.io/badge/Homepage-BioClaw-blue.svg)](https://ivegotmagicbean.github.io/BioClaw-Page/zh.html)
 [![Paper](https://img.shields.io/badge/bioRxiv-STELLA-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.07.01.662467v2)
 [![arXiv](https://img.shields.io/badge/arXiv-2507.02004-b31b1b.svg)](https://arxiv.org/abs/2507.02004)
+
+</div>
+
+<br/><br/>
+
+<h2 align="center">💬 访问官网 & 加入微信群</h2>
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://ivegotmagicbean.github.io/BioClaw-Page/zh.html">
+        <img src="https://raw.githubusercontent.com/IveGotMagicBean/BioClaw-Page/main/png/CN_Homepage.png" width="650" alt="BioClaw 官网"/>
+        <br/><br/>
+        <img src="https://img.shields.io/badge/微信-访问主页_·_扫码入群-07c160?style=for-the-badge&logo=wechat&logoColor=white" height="50" alt="加入微信群"/>
+      </a>
+      <br/><br/>
+      <h3>👆 点击上方图片，访问官网扫码加入微信群！</h3>
+    </td>
+  </tr>
+</table>
+</div>
+
+<br/><br/>
+
+<div align="center">
 
 <p align="center">
   新的 BioClaw 兼容 skills 可以直接在 BioClaw 中开发，也可以先提交到 <a href="https://github.com/zongtingwei/Bioclaw_Skills_Hub">Bioclaw_Skills_Hub</a> 作为前期迭代和测试的空间，再根据实际效果同步到主 BioClaw 仓库中。经过验证、效果稳定的 skills，后续可以逐步整合进 BioClaw。若想获取这些后续合入的 skills 和更新内容，请在本仓库中执行 <code>git pull</code>。
 </p>
-
 </div>
-
-
----
 
 ## 目录
 
