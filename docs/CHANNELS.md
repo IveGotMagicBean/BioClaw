@@ -8,19 +8,13 @@ For **Windows** and **browser-only (local web)** workflows, see also [WINDOWS.zh
 
 ## WhatsApp (default)
 
+All channels are opt-in. To enable WhatsApp, add to `.env`:
+
+```bash
+ENABLE_WHATSAPP=true
+```
+
 No API keys required. On first run, a QR code is printed in the terminal — scan it with WhatsApp. Auth state is stored under `store/auth/`.
-
-To turn WhatsApp off while using other channels:
-
-```bash
-DISABLE_WHATSAPP=1
-```
-
-Or:
-
-```bash
-ENABLE_WHATSAPP=false
-```
 
 ---
 
@@ -159,7 +153,7 @@ Restart BioClaw. The first message in a conversation auto-registers that workspa
 
 Useful when you want a **local HTTP chat** without WhatsApp (e.g. on Windows or for quick testing).
 
-1. Optional: in `.env` set `ENABLE_WHATSAPP=false` if you only want the browser channel (see `config-examples/.env.local-web.example` for other vars).
+1. Optional: remove `ENABLE_WHATSAPP=true` from `.env` if you only want the browser channel (see `config-examples/.env.local-web.example` for other vars).
 
 2. **Start the server with the web UI in one command:**
 
@@ -212,7 +206,7 @@ Optional: `LOCAL_WEB_SECRET` to require a shared secret on the webhook.
 
 ## Disabling channels
 
-- **WhatsApp only off:** `DISABLE_WHATSAPP=1` or `ENABLE_WHATSAPP=false` (other channels can still run if configured).
+- **WhatsApp off:** Simply omit `ENABLE_WHATSAPP=true` from `.env` (all channels are opt-in).
 - **Feishu / WeCom / Discord / Slack:** Remove or leave empty their token variables if you do not use them.
 
 See `.env.example` for all channel-related variables.

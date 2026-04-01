@@ -7,7 +7,7 @@ loadEnvFile();
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Bioclaw';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
-export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP !== 'false';
+export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP === 'true';
 export const ALLOW_WHATSAPP_SELF_MESSAGES =
   process.env.ALLOW_WHATSAPP_SELF_MESSAGES === 'true';
 export const ENABLE_LOCAL_WEB = process.env.ENABLE_LOCAL_WEB === 'true';

@@ -524,7 +524,7 @@ async function main(): Promise<void> {
     autoRegister: (jid: string, name: string, channelName: string) => {
       if (getRegisteredGroupsMap()[jid]) return;
       const folder = `${channelName}-${jid.split('@')[0].slice(-8)}`;
-      registerGroup(jid, { name, folder, trigger: TRIGGER_PATTERN.source, added_at: new Date().toISOString(), requiresTrigger: false });
+      registerGroup(jid, { name, folder, trigger: TRIGGER_PATTERN.source, added_at: new Date().toISOString(), requiresTrigger: true });
     },
   };
 
@@ -672,7 +672,7 @@ async function main(): Promise<void> {
     try { await wecom.connect(); } catch (err) { logger.error({ err }, 'WeCom connection failed'); }
   }
 
-  if (ENABLE_WHATSAPP && !process.env.DISABLE_WHATSAPP) {
+  if (ENABLE_WHATSAPP) {
     whatsapp = new WhatsAppChannel(channelCallbacks);
     channels.push(whatsapp);
     await whatsapp.connect();
