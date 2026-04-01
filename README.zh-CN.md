@@ -311,6 +311,26 @@ Agent 会在运行时自动发现 Hub 中的技能。当用户的任务超出内
 | `npx tsx scripts/manage-groups.ts list` | `scripts/manage-groups.ts` | 管理 WhatsApp 群组注册（list / register / remove） |
 | `python3 scripts/demo.py` | `scripts/demo.py` | TP53 基因分析演示（容器内运行） |
 
+## Notebook 导出
+
+每次 agent 成功运行后，会自动生成可复现的 Jupyter notebook（`.ipynb`），保存在：
+
+```
+groups/{workspace}/notebooks/{timestamp}.ipynb
+```
+
+例如 Slack DM 对话可能生成：
+```
+groups/slack-E1KYFDKN/notebooks/2026-04-01T07-31-54.ipynb
+```
+
+每个 notebook 包含：
+- **Header cell** — 日期、workspace、用户原始 prompt
+- **Code cells** — agent 执行的 Python 脚本和 bash 命令
+- **Markdown cells** — agent 推理、文件写入、分析总结
+
+可在 VS Code（安装 [Jupyter 扩展](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter)）、JupyterLab 或其他 `.ipynb` 查看器中打开。
+
 ## 项目结构
 
 ```text

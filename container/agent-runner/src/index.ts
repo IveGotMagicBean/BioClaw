@@ -1291,17 +1291,40 @@ async function runOpenAICompatibleConversation(
     });
     saveOpenAICompatibleSessionMessages(newSessionId, messages);
 
+    // Emit thinking trace for assistant text content
+    const assistantText = normalizeContent(assistantMessage.content);
+    if (assistantText) {
+      writeIpcFile(IPC_MESSAGES_DIR, {
+        type: 'agent_step',
+        stepType: 'thinking',
+        text: assistantText.slice(0, 2000),
+        groupFolder: containerInput.groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-      const textResult = normalizeContent(assistantMessage.content);
       writeOutput({
         status: 'success',
-        result: textResult,
+        result: assistantText,
         newSessionId,
       });
       return { newSessionId, closedDuringQuery: false, messages };
     }
 
     for (const toolCall of assistantMessage.tool_calls) {
+      // Emit tool_use trace for notebook export
+      const rawInput = toolCall.function.arguments || '{}';
+      writeIpcFile(IPC_MESSAGES_DIR, {
+        type: 'agent_step',
+        stepType: 'tool_use',
+        toolName: toolCall.function.name,
+        toolInput: rawInput.slice(0, 1000),
+        toolInputFull: rawInput.length > 1000 ? rawInput : undefined,
+        groupFolder: containerInput.groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+
       const toolResult = await executeOpenAIToolCall(
         toolCall.function.name,
         toolCall.function.arguments,

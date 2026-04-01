@@ -4,6 +4,7 @@ import path from 'path';
 import { App, LogLevel } from '@slack/bolt';
 
 import { logger } from '../logger.js';
+import { ASSISTANT_NAME } from '../config.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 /** Conversation ID (channel / DM / group DM) — same JID space as Slack API `channel` field */
@@ -52,6 +53,7 @@ export class SlackChannel implements Channel {
 
   private app: App;
   private connected = false;
+  private botUserId = '';
   private opts: SlackChannelOpts;
   private readonly userDisplayCache = new Map<string, string>();
   private readonly channelTitleCache = new Map<string, string>();
@@ -99,18 +101,27 @@ export class SlackChannel implements Channel {
     }
     if (!content.trim()) return;
 
+    // Replace Slack's <@BOT_ID> mention with @AssistantName so trigger pattern matches
+    if (this.botUserId) {
+      content = content.replace(
+        new RegExp(`<@${this.botUserId}>`, 'g'),
+        `@${ASSISTANT_NAME}`,
+      );
+    }
+
     const chatJid = `${event.channel}${SLACK_JID_SUFFIX}`;
     const timestamp = slackTsToIso(event.ts);
+    const isDm = event.channel.startsWith('D');
 
     logger.info(
-      { chatJid, user: event.user, preview: content.slice(0, 80) },
+      { chatJid, user: event.user, isDm, preview: content.slice(0, 80) },
       'Slack message received',
     );
 
     let groups = this.opts.registeredGroups();
     if (!groups[chatJid] && this.opts.autoRegister) {
       const title = await this.resolveConversationTitle(event.channel);
-      this.opts.autoRegister(chatJid, title, 'slack');
+      this.opts.autoRegister(chatJid, title, isDm ? 'slack-dm' : 'slack');
       groups = this.opts.registeredGroups();
     }
 
@@ -175,7 +186,8 @@ export class SlackChannel implements Channel {
 
     try {
       const auth = await this.app.client.auth.test();
-      logger.info({ team: auth.team, user: auth.user }, 'Connected to Slack (Socket Mode)');
+      if (auth.user_id) this.botUserId = auth.user_id as string;
+      logger.info({ team: auth.team, user: auth.user, botUserId: this.botUserId }, 'Connected to Slack (Socket Mode)');
     } catch {
       logger.info('Connected to Slack (Socket Mode)');
     }

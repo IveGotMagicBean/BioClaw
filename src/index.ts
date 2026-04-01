@@ -307,6 +307,7 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  const nbPrompt = missedMessages.map((m) => m.content).join('\n\n');
   const output = await runAgent(group, agentId, prompt, replyChatJid, async (result) => {
     if (result.result) {
       const raw = typeof result.result === 'string'
@@ -324,7 +325,7 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
       resetIdleTimer();
     }
     if (result.status === 'error') hadError = true;
-  });
+  }, nbPrompt);
 
   await channel.setTyping?.(replyChatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -349,6 +350,7 @@ async function runAgent(
   agentId: string,
   prompt: string, chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  notebookPrompt?: string,
 ): Promise<'success' | 'error'> {
   const workspaceFolder = getWorkspaceFolder(group);
   const isMain = workspaceFolder === MAIN_GROUP_FOLDER;
@@ -410,7 +412,7 @@ async function runAgent(
     // Async notebook export — non-blocking, delayed to allow IPC events to settle
     if (out.status === 'success') {
       setTimeout(() => {
-        exportNotebook(workspaceFolder, runStartedAt, runEndedAt, prompt);
+        exportNotebook(workspaceFolder, runStartedAt, runEndedAt, notebookPrompt || prompt);
       }, 2000);
     }
 
@@ -523,8 +525,10 @@ async function main(): Promise<void> {
     registeredGroups: () => getRegisteredGroupsMap(),
     autoRegister: (jid: string, name: string, channelName: string) => {
       if (getRegisteredGroupsMap()[jid]) return;
-      const folder = `${channelName}-${jid.split('@')[0].slice(-8)}`;
-      registerGroup(jid, { name, folder, trigger: TRIGGER_PATTERN.source, added_at: new Date().toISOString(), requiresTrigger: true });
+      const baseChannel = channelName.replace(/-dm$/, '');
+      const isDm = channelName.endsWith('-dm');
+      const folder = `${baseChannel}-${jid.split('@')[0].slice(-8)}`;
+      registerGroup(jid, { name, folder, trigger: TRIGGER_PATTERN.source, added_at: new Date().toISOString(), requiresTrigger: !isDm });
     },
   };
 

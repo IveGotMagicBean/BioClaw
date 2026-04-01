@@ -125,17 +125,26 @@ function traceEventsToCells(events: AgentTraceRow[]): NotebookCell[] {
       const input = safeJsonParse<Record<string, unknown>>(rawInput);
       if (!input) continue;
 
-      // Bash tool → code cell
-      if (toolName === 'Bash') {
+      // Bash tool → code cell (Claude SDK: 'Bash', OpenAI: 'bash')
+      if (toolName === 'Bash' || toolName === 'bash') {
         const { command } = input as BashToolInput;
         if (command) {
-          cells.push(makeCodeCell(command, 'bash'));
+          // Detect python heredoc: `python3 << 'EOF'\n...\nEOF`
+          const heredocMatch = command.match(
+            /^python3?\s+<<\s*'?(\w+)'?\s*\n([\s\S]*?)\n\1\s*$/,
+          );
+          if (heredocMatch) {
+            cells.push(makeCodeCell(heredocMatch[2], 'python'));
+          } else {
+            cells.push(makeCodeCell(command, 'bash'));
+          }
         }
         continue;
       }
 
       // Write tool → code cell if Python, otherwise describe in markdown
-      if (toolName === 'Write') {
+      // Claude SDK: 'Write', OpenAI: 'write_file'
+      if (toolName === 'Write' || toolName === 'write_file') {
         const { file_path: fp, content } = input as WriteToolInput;
         if (fp && content) {
           if (isPythonFile(fp)) {
@@ -154,7 +163,7 @@ function traceEventsToCells(events: AgentTraceRow[]): NotebookCell[] {
         continue;
       }
 
-      // Edit tool → describe the change
+      // Edit tool → describe the change (Claude SDK only, no OpenAI equivalent)
       if (toolName === 'Edit') {
         const { file_path: fp, old_string, new_string } = input as EditToolInput;
         if (fp) {
@@ -169,6 +178,9 @@ function traceEventsToCells(events: AgentTraceRow[]): NotebookCell[] {
         }
         continue;
       }
+
+      // Skip IPC tools that aren't reproducible analysis steps
+      if (toolName === 'send_message' || toolName === 'send_image') continue;
 
       // Other tools (Read, Grep, Glob, WebSearch, etc.) → brief markdown note
       cells.push(makeMarkdownCell([`**${toolName}** ${rawInput.slice(0, 200)}`]));

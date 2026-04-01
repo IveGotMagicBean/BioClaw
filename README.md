@@ -428,6 +428,27 @@ All utility scripts are in the `scripts/` directory:
 | `npx tsx scripts/manage-groups.ts list` | `scripts/manage-groups.ts` | Manage WhatsApp group registrations (list / register / remove) |
 | `python3 scripts/demo.py` | `scripts/demo.py` | TP53 gene analysis demo (runs inside container) |
 
+## Notebook Export
+
+Every successful agent run automatically generates a reproducible Jupyter notebook (`.ipynb`).
+Notebooks are saved to:
+
+```
+groups/{workspace}/notebooks/{timestamp}.ipynb
+```
+
+For example, a Slack DM conversation might produce:
+```
+groups/slack-E1KYFDKN/notebooks/2026-04-01T07-31-54.ipynb
+```
+
+Each notebook contains:
+- **Header cell** — date, workspace, and the original user prompt
+- **Code cells** — Python scripts and bash commands the agent executed
+- **Markdown cells** — agent reasoning, file writes, and analysis summaries
+
+Open notebooks in VS Code (with the [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter)), JupyterLab, or any `.ipynb`-compatible viewer.
+
 ## Project Structure
 
 ```
