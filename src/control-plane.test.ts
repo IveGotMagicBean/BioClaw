@@ -282,4 +282,70 @@ describe('control-plane commands', () => {
     expect(archived.handled).toBe(true);
     expect(listThreadsForChat('wechat-test@wechat.user').some((thread) => thread.title === 'Alpha plan')).toBe(false);
   });
+
+  it('lists configured SSH hosts via /ssh list', async () => {
+    const result = await executeControlCommand(
+      'local-web@local.web',
+      '/ssh list',
+      {
+        channels: () => [],
+        ssh: {
+          listHosts: () => ['lambda-cloud-54-140', 'hpc-login'],
+        },
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.response).toContain('lambda-cloud-54-140');
+    expect(result.response).toContain('hpc-login');
+  });
+
+  it('supports bare ssh host probe commands in chat', async () => {
+    const result = await executeControlCommand(
+      'local-web@local.web',
+      'ssh lambda-cloud-54-140',
+      {
+        channels: () => [],
+        ssh: {
+          probeHost: async (host) => ({
+            host,
+            hostname: '192-222-54-140',
+            user: 'ubuntu',
+            cwd: '/home/ubuntu',
+            durationMs: 27,
+          }),
+        },
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.response).toContain('SSH connected: lambda-cloud-54-140');
+    expect(result.response).toContain('Hostname: 192-222-54-140');
+  });
+
+  it('runs remote commands through ssh control plane', async () => {
+    const result = await executeControlCommand(
+      'local-web@local.web',
+      'ssh lambda-cloud-54-140 -- hostname',
+      {
+        channels: () => [],
+        ssh: {
+          runCommand: async (host, command) => ({
+            host,
+            command,
+            exitCode: 0,
+            stdout: '192-222-54-140',
+            stderr: '',
+            durationMs: 55,
+            timedOut: false,
+          }),
+        },
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.response).toContain('SSH host: lambda-cloud-54-140');
+    expect(result.response).toContain('Command: hostname');
+    expect(result.response).toContain('192-222-54-140');
+  });
 });

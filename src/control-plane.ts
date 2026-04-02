@@ -45,6 +45,7 @@ import {
   upsertAgentDefinition,
 } from './session-manager.js';
 import { Channel, ScheduledTask } from './types.js';
+import { listAllowedSshHosts, probeSshHost, runSshCommand } from './host-ssh.js';
 
 export interface ThreadSummary {
   chatJid: string;
@@ -59,6 +60,11 @@ export interface ControlPlaneDeps {
   channels: () => Channel[];
   listThreads?: () => ThreadSummary[];
   createThread?: (title?: string) => Promise<ThreadSummary>;
+  ssh?: {
+    listHosts?: () => string[] | Promise<string[]>;
+    probeHost?: (host: string) => Promise<{ host: string; hostname: string; user: string; cwd: string; durationMs: number }>;
+    runCommand?: (host: string, command: string) => Promise<{ host: string; command: string; exitCode: number; stdout: string; stderr: string; durationMs: number; timedOut: boolean }>;
+  };
 }
 
 export interface ControlCommandResult {
@@ -97,7 +103,50 @@ const RESERVED_COMMANDS = new Set([
   'archive',
   'commands',
   'alias',
+  'ssh',
 ]);
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatSshCommandResult(result: {
+  host: string;
+  command: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+}): string {
+  const lines = [
+    `SSH host: ${result.host}`,
+    `Command: ${result.command}`,
+    `Exit code: ${result.exitCode}`,
+    `Duration: ${result.durationMs}ms`,
+  ];
+  if (result.timedOut) lines.push('Timed out: yes');
+  if (result.stdout) lines.push('', `STDOUT:\n${result.stdout}`);
+  if (result.stderr) lines.push('', `STDERR:\n${result.stderr}`);
+  if (!result.stdout && !result.stderr) lines.push('', '(no output)');
+  return lines.join('\n');
+}
+
+function formatSshHostList(hosts: string[]): string {
+  if (hosts.length === 0) {
+    return 'No SSH host aliases are configured. Add aliases to ~/.ssh/config or set BIOCLAW_SSH_ALLOWED_HOSTS.';
+  }
+  return ['Available SSH hosts:', ...hosts.map((host) => `- ${host}`)].join('\n');
+}
+
+function extractSshCommand(rawText: string, host: string, explicitRun: boolean): string {
+  const pattern = explicitRun
+    ? new RegExp(`^/?ssh\\s+run\\s+${escapeRegex(host)}(?:\\s+|$)`, 'i')
+    : new RegExp(`^/?ssh\\s+${escapeRegex(host)}(?:\\s+|$)`, 'i');
+  let remainder = rawText.replace(pattern, '').trim();
+  if (remainder.startsWith('--')) remainder = remainder.slice(2).trim();
+  return remainder;
+}
 
 function tokenizeCommand(input: string): string[] {
   const tokens: string[] = [];
@@ -661,7 +710,11 @@ export async function executeControlCommand(
   rawText: string,
   deps: ControlPlaneDeps,
 ): Promise<ControlCommandResult> {
-  const trimmed = rawText.trim();
+  const initialTrimmed = rawText.trim();
+  const normalizedRawText = /^ssh(?:\s|$)/i.test(initialTrimmed)
+    ? `/${initialTrimmed}`
+    : initialTrimmed;
+  const trimmed = normalizedRawText.trim();
   if (!trimmed.startsWith('/')) return { handled: false };
 
   const boundAgent = getAgentForChat(chatJid);
@@ -696,6 +749,9 @@ export async function executeControlCommand(
           '/use <thread-id-or-title>',
           '/rename <new-title> OR /rename <thread-id-or-title> :: <new-title>',
           '/archive [thread-id-or-title]',
+          '/ssh list',
+          '/ssh <host-alias>',
+          '/ssh <host-alias> -- <command>',
         ].join('\n'),
       };
     case '/status': {
@@ -1504,6 +1560,74 @@ export async function executeControlCommand(
           : `Archived thread ${archived.archivedThread.title} (${archived.archivedThread.id}).`,
         data: archived,
       };
+    }
+    case '/ssh': {
+      const sshDeps = deps.ssh;
+      const listHosts = async () => {
+        const hosts = sshDeps?.listHosts ? await sshDeps.listHosts() : listAllowedSshHosts();
+        return Array.isArray(hosts) ? hosts : [];
+      };
+      const probeHost = async (host: string) => (
+        sshDeps?.probeHost ? sshDeps.probeHost(host) : probeSshHost(host)
+      );
+      const runHostCommand = async (host: string, commandText: string) => (
+        sshDeps?.runCommand ? sshDeps.runCommand(host, commandText) : runSshCommand(host, commandText)
+      );
+
+      const action = (tokens[1] || 'list').toLowerCase();
+      if (action === 'list') {
+        return { handled: true, response: formatSshHostList(await listHosts()) };
+      }
+
+      if (action === 'run') {
+        const host = tokens[2];
+        if (!host) {
+          return { handled: true, response: 'Usage: /ssh run <host-alias> -- <command>' };
+        }
+        const commandText = extractSshCommand(expandedText, host, true);
+        if (!commandText) {
+          return { handled: true, response: 'Usage: /ssh run <host-alias> -- <command>' };
+        }
+        try {
+          const result = await runHostCommand(host, commandText);
+          return { handled: true, response: formatSshCommandResult(result) };
+        } catch (err) {
+          return {
+            handled: true,
+            response: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+
+      const host = tokens[1];
+      if (!host) {
+        return { handled: true, response: formatSshHostList(await listHosts()) };
+      }
+
+      const commandText = extractSshCommand(expandedText, host, false);
+      try {
+        if (!commandText) {
+          const result = await probeHost(host);
+          return {
+            handled: true,
+            response: [
+              `SSH connected: ${result.host}`,
+              `Hostname: ${result.hostname}`,
+              `User: ${result.user}`,
+              `Directory: ${result.cwd}`,
+              `Duration: ${result.durationMs}ms`,
+            ].join('\n'),
+          };
+        }
+
+        const result = await runHostCommand(host, commandText);
+        return { handled: true, response: formatSshCommandResult(result) };
+      } catch (err) {
+        return {
+          handled: true,
+          response: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
     default:
       if (agent) {
