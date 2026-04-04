@@ -13,6 +13,15 @@ Anything the WhatsApp / WeCom / Discord / local-web agent should use belongs **h
 | `sds-gel-review/` | SDS gel image review |
 | `query-*` | Database / API usage (Ensembl, UniProt, KEGG, …) |
 | `blast-search/`, `pubmed-search/`, `sequence-analysis/` | Literature & sequence workflows |
+| `bio-manuscript-*` | Community-contributed manuscript planning pipeline for idea screening, figure planning, manuscript drafting, refinement, and implementation blueprints |
+| `bio-manuscript-common/` | Shared templates and helper scripts used by the manuscript pipeline skill family |
+
+## Community Skills
+
+Some runtime skills may be integrated from BioClaw community contributors when they prove useful in real workflows. The manuscript pipeline skill family currently staged here is integrated as a community-contributed workflow.
+
+Contributor reference:
+- Yuhong Dong, Westlake University PhD candidate, BioClaw community contributor
 
 ## Developer-only skills
 
