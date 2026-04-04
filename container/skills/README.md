@@ -18,10 +18,10 @@ Anything the WhatsApp / WeCom / Discord / local-web agent should use belongs **h
 
 ## Community Skills
 
-Some runtime skills may be integrated from BioClaw community contributors when they prove useful in real workflows. The manuscript pipeline skill family currently staged here is integrated as a community-contributed workflow.
+Some runtime skills may be integrated from BioClaw community contributors when they prove useful in real workflows. The manuscript pipeline skill family currently staged here is integrated as a community-contributed workflow adapted from [bio-manuscript-forge](https://github.com/donghongyu2020/bio-manuscript-forge/tree/main/bio-manuscript-forge).
 
 Contributor reference:
-- Yuhong Dong, Westlake University PhD candidate, BioClaw community contributor
+- Hongyu Dong, Westlake University PhD candidate, BioClaw community contributor
 
 ## Developer-only skills
 

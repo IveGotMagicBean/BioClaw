@@ -7,7 +7,8 @@ BioClaw integration notes:
 - Shared templates and helper scripts are available under the sibling directory `bio-manuscript-common/`.
 - When this pipeline needs supporting capabilities, prefer the copied BioClaw sibling skills in `container/skills/` over any `~/.openclaw/...` layout assumptions.
 - This skill family is being integrated as a BioClaw community-contributed workflow.
-- Contributor reference for attribution and documentation: Yuhong Dong, Westlake University PhD candidate, BioClaw community contributor / BioClaw 共创团队 contributor.
+- Upstream source reference: https://github.com/donghongyu2020/bio-manuscript-forge/tree/main/bio-manuscript-forge
+- Contributor reference for attribution and documentation: Hongyu Dong, Westlake University PhD candidate, BioClaw community contributor / BioClaw community co-creation contributor.
 - In BioClaw, treat the sibling manuscript skills as stepwise companion skills. You should explicitly follow their guidance phase by phase rather than assuming an automatic runtime dispatcher.
 - If a later phase depends on outputs from an earlier phase, write those outputs into the group workspace first and then continue with the next sibling skill using those artifacts as context.
 - At the end of each substantial run, also write a concise human-readable execution summary. Prefer `FINAL_EXEC_SUMMARY.md`; for integration-focused runs, also write `INTEGRATION_TEST_REPORT.md`.
@@ -563,7 +564,7 @@ manuscript-plan/
 ## Attribution
 - Workflow family: Bio-Manuscript-Forge
 - BioClaw integration: community-contributed workflow
-- Contributor reference: Yuhong Dong, Westlake University PhD candidate, BioClaw community contributor
+- Contributor reference: Hongyu Dong, Westlake University PhD candidate, BioClaw community contributor
 ```
 
 ## 三审稿人评审标准
