@@ -181,6 +181,10 @@ const LANG_KEY = 'bioclaw-web-lang';
         uploadedPrefix: '已上传 · ',
         openFile: '打开',
         download: '下载',
+        copy: '复制',
+        copied: '已复制',
+        copyFail: '复制失败',
+        downloadFile: '下载文件',
         uploading: '正在上传…',
         uploadFail: '上传失败',
         sendFail: '发送失败',
@@ -285,6 +289,10 @@ const LANG_KEY = 'bioclaw-web-lang';
         uploadedPrefix: 'Uploaded · ',
         openFile: 'Open',
         download: 'Download',
+        copy: 'Copy',
+        copied: 'Copied',
+        copyFail: 'Copy failed',
+        downloadFile: 'Download file',
         uploading: 'Uploading…',
         uploadFail: 'Upload failed',
         sendFail: 'Send failed',
@@ -540,6 +548,15 @@ const LANG_KEY = 'bioclaw-web-lang';
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
+    function escAttr(s) {
+      return String(s)
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#39;');
+    }
+
     (function setupMarkdownSanitize() {
       if (typeof DOMPurify !== 'undefined' && !globalThis.__bioclawDpHook) {
         globalThis.__bioclawDpHook = true;
@@ -574,6 +591,34 @@ const LANG_KEY = 'bioclaw-web-lang';
       } catch (e2) {
         return esc(raw).replace(/\n/g, '<br>');
       }
+    }
+
+    function extractFileLinks(text) {
+      var matches = String(text).match(/\/files\/[\w./%-]+/g);
+      if (!matches) return [];
+      var seen = {};
+      var list = [];
+      for (var i = 0; i < matches.length; i++) {
+        var item = matches[i];
+        if (seen[item]) continue;
+        seen[item] = true;
+        list.push(item);
+      }
+      return list;
+    }
+
+    function renderFileActions(paths) {
+      if (!paths || paths.length === 0) return '';
+      var t = T();
+      return '<div class="file-action-list">' + paths.map(function (p) {
+        var name = p.split('/').pop() || p;
+        return '<div class="file-action-item">' +
+          '<div class="file-action-name">' + esc(name) + '</div>' +
+          '<div class="file-actions">' +
+          '<a class="file-button" href="' + escAttr(p) + '" target="_blank" rel="noreferrer">' + esc(t.openFile) + '</a>' +
+          '<a class="file-button" href="' + escAttr(p) + '" download>' + esc(t.downloadFile) + '</a>' +
+          '</div></div>';
+      }).join('') + '</div>';
     }
 
     function traceTypeTitle(type, t) {
@@ -1371,8 +1416,11 @@ const LANG_KEY = 'bioclaw-web-lang';
         var kind = msg.is_from_me ? 'bot' : 'user';
         var name = msg.is_from_me ? assistantName : (msg.sender_name || t.userFallback);
         var role = msg.is_from_me ? t.roleAssistant : t.roleYou;
+        var copyBtn = msg.is_from_me
+          ? '<button type="button" class="copy-btn" data-copy="' + escAttr(encodeURIComponent(String(msg.content))) + '">' + esc(t.copy) + '</button>'
+          : '';
         return '<article class="bubble ' + kind + '"><div class="meta"><span class="badge">' + esc(role) + '</span>' +
-          esc(name) + ' · ' + esc(msg.timestamp) + '</div><div class="content">' + renderBody(msg.content) + '</div></article>';
+          esc(name) + ' · ' + esc(msg.timestamp) + copyBtn + '</div><div class="content">' + renderBody(msg.content) + '</div></article>';
       }).join('');
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
@@ -1380,7 +1428,9 @@ const LANG_KEY = 'bioclaw-web-lang';
     function renderBody(text) {
       var upload = parseUploadMessage(text);
       if (upload) return renderUploadCard(upload);
-      return markdownToSafeHtml(String(text));
+      var html = markdownToSafeHtml(String(text));
+      var files = extractFileLinks(text);
+      return html + renderFileActions(files);
     }
 
     function parseUploadMessage(text) {
@@ -1415,6 +1465,26 @@ const LANG_KEY = 'bioclaw-web-lang';
         var data = await res.json();
         render(data.messages || []);
       } catch (e) {}
+    }
+
+    if (messagesEl) {
+      messagesEl.addEventListener('click', async function (event) {
+        var btn = event.target && event.target.closest ? event.target.closest('.copy-btn') : null;
+        if (!btn) return;
+        event.preventDefault();
+        var payload = btn.getAttribute('data-copy') || '';
+        var raw = '';
+        try { raw = decodeURIComponent(payload); } catch (e) { raw = payload; }
+        var t = T();
+        try {
+          await navigator.clipboard.writeText(raw);
+          btn.textContent = t.copied;
+          setTimeout(function () { btn.textContent = t.copy; }, 1200);
+        } catch (e2) {
+          btn.textContent = t.copyFail;
+          setTimeout(function () { btn.textContent = t.copy; }, 1200);
+        }
+      });
     }
 
     function startPolling() {

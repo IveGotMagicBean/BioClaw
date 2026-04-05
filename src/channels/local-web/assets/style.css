@@ -440,6 +440,22 @@
     .bubble.user { align-self: flex-end; background: var(--user-muted); border-color: color-mix(in srgb, var(--user) 35%, var(--border)); }
     .bubble.bot { align-self: flex-start; background: var(--accent-muted); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
     .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .meta .copy-btn {
+      margin-left: auto;
+      border: 1px solid var(--border);
+      background: var(--surface-raised);
+      color: var(--muted);
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+    .meta .copy-btn:hover {
+      color: var(--ink);
+      border-color: color-mix(in srgb, var(--muted) 35%, var(--border));
+      background: var(--surface);
+    }
     .badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); }
     .content { font-size: 14px; line-height: 1.55; white-space: normal; word-break: break-word; overflow-x: auto; max-width: 100%; }
     .content a { color: var(--accent); }
@@ -551,6 +567,18 @@
       display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: var(--radius-sm);
       text-decoration: none; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 13px;
     }
+    .file-action-list { margin-top: 10px; display: grid; gap: 8px; }
+    .file-action-item {
+      padding: 10px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-raised);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .file-action-name { font-size: 12px; color: var(--muted); word-break: break-all; }
     .preview { max-width: min(100%, 360px); max-height: 200px; border-radius: var(--radius-sm); object-fit: cover; border: 1px solid var(--border); }
     .trace-toolbar { padding: 12px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
     .trace-opt {
