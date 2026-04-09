@@ -2,6 +2,7 @@ import http from 'http';
 
 import * as Lark from '@larksuiteoapi/node-sdk';
 
+import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../logger.js';
 import { Channel, NewMessage, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types.js';
 
@@ -82,6 +83,35 @@ function buildChatName(event: FeishuMessageEvent): string {
     return `Feishu DM ${senderIdFor(event)}`;
   }
   return `Feishu Group ${event.message.chat_id.slice(-8)}`;
+}
+
+function escapeRegexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeFeishuMentionTokens(event: FeishuMessageEvent, content: string): string {
+  let normalized = content;
+  const mentions = event.message.mentions as Array<{ key?: string; name?: string }> | undefined;
+
+  if (Array.isArray(mentions)) {
+    for (const mention of mentions) {
+      const key = mention.key?.trim();
+      if (!key) continue;
+      const mentionName = mention.name?.trim() || ASSISTANT_NAME;
+      normalized = normalized.replace(
+        new RegExp(`@${escapeRegexLiteral(key)}\\b`, 'g'),
+        `@${mentionName}`,
+      );
+    }
+  }
+
+  // In group chats, Feishu commonly emits mention placeholders like "@_user_1".
+  // Convert the leading placeholder to @AssistantName so trigger gating can match.
+  if (event.message.chat_type !== 'p2p') {
+    normalized = normalized.replace(/^(\s*)@_[^\s]+/, `$1@${ASSISTANT_NAME}`);
+  }
+
+  return normalized;
 }
 
 export class FeishuChannel implements Channel {
@@ -210,7 +240,10 @@ export class FeishuChannel implements Channel {
     if (this.isDuplicateEvent(event.event_id)) return;
     if (event.sender.sender_type !== 'user') return;
 
-    const content = parseFeishuMessageContent(event.message.message_type, event.message.content);
+    const rawContent = parseFeishuMessageContent(event.message.message_type, event.message.content);
+    const content = rawContent
+      ? normalizeFeishuMentionTokens(event, rawContent)
+      : rawContent;
     if (!content) return;
 
     const chatJid = buildFeishuChatJid(event.message.chat_id, event.message.chat_type);

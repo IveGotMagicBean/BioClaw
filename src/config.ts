@@ -84,6 +84,15 @@ export const TRIGGER_PATTERN = new RegExp(
   'i',
 );
 
+// Matches summary/recap requests in any triggered message
+export const SUMMARY_PATTERN = /总结|汇总|概括|recap|summary|summarize|回顾/i;
+
+// How many recent messages to pull for conversation history context
+export const SUMMARY_HISTORY_LIMIT = parseInt(
+  process.env.SUMMARY_HISTORY_LIMIT || '200',
+  10,
+);
+
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
 export const TIMEZONE =

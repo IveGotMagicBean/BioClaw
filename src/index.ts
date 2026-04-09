@@ -29,6 +29,8 @@ import {
   LOCAL_WEB_PORT,
   MAIN_GROUP_FOLDER,
   TRIGGER_PATTERN,
+  SUMMARY_PATTERN,
+  SUMMARY_HISTORY_LIMIT,
 } from './config.js';
 import { recordAgentTraceEvent } from './agent-trace.js';
 import { ContainerOutput, runContainerAgent } from './container-runner.js';
@@ -47,7 +49,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
 import { startMessageLoop, getAvailableGroups, recoverPendingMessages } from './message-loop.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatConversationHistory, formatMessages, formatOutbound } from './router.js';
 import {
   loadState,
   saveState,
@@ -88,6 +90,31 @@ import {
 } from './control-plane.js';
 
 const WORKSPACE_SYNC_HEADER = '[Workspace sync from linked clients]';
+const DM_JID_SUFFIXES = [
+  '@feishu.user',
+  '@wechat.user',
+  '@discord.dm',
+  '@qq.user',
+  '@wecom.user',
+];
+
+function isDirectMessageConversation(jid: string, channelName: string): boolean {
+  if (channelName.endsWith('-dm')) return true;
+  return DM_JID_SUFFIXES.some((suffix) => jid.endsWith(suffix));
+}
+
+function normalizeDirectMessageTriggerDefaults(): void {
+  const groups = getRegisteredGroupsMap();
+  for (const [jid, group] of Object.entries(groups)) {
+    if (!isDirectMessageConversation(jid, '')) continue;
+    if (group.requiresTrigger === false) continue;
+    upsertRegisteredGroupDefinition(jid, {
+      ...group,
+      requiresTrigger: false,
+    });
+    logger.info({ jid, name: group.name }, 'Updated DM group to requiresTrigger=false');
+  }
+}
 
 function sanitizeLocalWebThreadTitle(title?: string): string {
   const trimmed = (title || '').replace(/\s+/g, ' ').trim();
@@ -267,8 +294,22 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
   }
   saveState();
 
+  // Detect summary/recap request: any trigger message contains summary keywords
+  const isSummaryRequest = missedMessages.some(
+    (m) => TRIGGER_PATTERN.test(m.content.trim()) && SUMMARY_PATTERN.test(m.content),
+  );
+  let agentPrompt = prompt;
+  if (isSummaryRequest) {
+    const historyMessages = getRecentMessagesForChats(chatJids, SUMMARY_HISTORY_LIMIT);
+    const missedIds = new Set(missedMessages.map((m) => m.id));
+    const historyOnly = historyMessages.filter((m) => !missedIds.has(m.id));
+    if (historyOnly.length > 0) {
+      agentPrompt = `${formatConversationHistory(historyOnly)}\n\nThe following message(s) are requesting a summary and feedback of the above conversation:\n\n${prompt}`;
+    }
+  }
+
   logger.info(
-    { group: group.name, agentId, workspaceFolder, replyChatJid, messageCount: missedMessages.length },
+    { group: group.name, agentId, workspaceFolder, replyChatJid, messageCount: missedMessages.length, isSummaryRequest },
     'Processing agent messages',
   );
 
@@ -290,8 +331,9 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
     type: 'run_start',
     payload: {
       messageCount: missedMessages.length,
-      promptLength: prompt.length,
-      preview: prompt.slice(0, 500),
+      promptLength: agentPrompt.length,
+      isSummaryRequest,
+      preview: agentPrompt.slice(0, 500),
     },
   });
 
@@ -308,7 +350,7 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
   let outputSentToUser = false;
 
   const nbPrompt = missedMessages.map((m) => m.content).join('\n\n');
-  const output = await runAgent(group, agentId, prompt, replyChatJid, async (result) => {
+  const output = await runAgent(group, agentId, agentPrompt, replyChatJid, async (result) => {
     if (result.result) {
       const raw = typeof result.result === 'string'
         ? result.result
@@ -502,6 +544,7 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  normalizeDirectMessageTriggerDefaults();
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
@@ -526,7 +569,7 @@ async function main(): Promise<void> {
     autoRegister: (jid: string, name: string, channelName: string) => {
       if (getRegisteredGroupsMap()[jid]) return;
       const baseChannel = channelName.replace(/-dm$/, '');
-      const isDm = channelName.endsWith('-dm');
+      const isDm = isDirectMessageConversation(jid, channelName);
       const folder = `${baseChannel}-${jid.split('@')[0].slice(-8)}`;
       registerGroup(jid, { name, folder, trigger: TRIGGER_PATTERN.source, added_at: new Date().toISOString(), requiresTrigger: !isDm });
     },
