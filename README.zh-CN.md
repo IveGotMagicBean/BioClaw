@@ -176,6 +176,20 @@ OPENAI_COMPATIBLE_BASE_URL=https://your-provider.example/v1
 OPENAI_COMPATIBLE_MODEL=your-model-name
 ```
 
+**方案 C：复用本机 Codex CLI 登录态**
+
+```bash
+MODEL_PROVIDER=openai-codex
+OPENAI_CODEX_MODEL=gpt-5.4
+```
+
+要求：
+
+- 宿主机已经安装 `codex`
+- 已执行过 `codex login`，并且 `~/.codex/auth.json` 有效
+
+BioClaw 会复用宿主机的 Codex 登录态，并把 Codex 线程状态保存在当前工作区会话目录里，这样多轮 GPT 对话可以续接。
+
 修改 `.env` 后，重启 BioClaw：
 
 ```bash

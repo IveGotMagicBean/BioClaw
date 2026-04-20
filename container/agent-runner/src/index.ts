@@ -16,11 +16,12 @@
 
 import fs from 'fs';
 import path from 'path';
-import { exec as execChildProcess } from 'child_process';
+import { exec as execChildProcess, execFile as execFileChildProcess, spawn as spawnChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 import { promisify } from 'util';
+import { createInterface } from 'readline';
 import { detectTaskRouting, mergeSkillSelections } from './task-routing.js';
 
 interface ContainerInput {
@@ -34,7 +35,7 @@ interface ContainerInput {
   agentSystemPrompt?: string;
   workdir?: string;
   runtimeConfig?: {
-    provider?: 'anthropic' | 'openrouter' | 'openai-compatible';
+    provider?: 'anthropic' | 'openrouter' | 'openai-compatible' | 'openai-codex';
     model?: string;
     baseUrl?: string;
     enabledSkills?: string[];
@@ -85,8 +86,9 @@ const SKILLS_ROOT = '/home/node/.claude/skills';
 const MAX_SKILL_SUMMARY_LINES = 18;
 const MAX_SKILL_DESCRIPTION_CHARS = 140;
 const execAsync = promisify(execChildProcess);
+const execFileAsync = promisify(execFileChildProcess);
 
-type ProviderKind = 'anthropic' | 'openai-compatible';
+type ProviderKind = 'anthropic' | 'openai-compatible' | 'openai-codex';
 
 interface ProviderConfig {
   provider: ProviderKind;
@@ -115,6 +117,10 @@ interface OpenAIChatResponse {
 }
 
 const OPENAI_SESSION_DIR = '/home/node/.claude/openai-compatible-sessions';
+const OPENAI_CODEX_HOME = '/home/node/.claude/codex-home';
+const OPENAI_CODEX_AUTH_PATH = path.join(OPENAI_CODEX_HOME, 'auth.json');
+const OPENAI_CODEX_OUTPUT_DIR = path.join(OPENAI_CODEX_HOME, 'outputs');
+const DEFAULT_OPENAI_CODEX_CLI_JS = '/opt/host-node-modules/@openai/codex/bin/codex.js';
 
 function getOpenAICompatibleSessionPath(sessionId: string): string {
   return path.join(OPENAI_SESSION_DIR, `${encodeURIComponent(sessionId)}.json`);
@@ -356,9 +362,27 @@ function resolveProviderConfig(env: Record<string, string | undefined>): Provide
   const requestedProvider = (env.MODEL_PROVIDER || '').trim().toLowerCase();
   const openRouterKey = env.OPENROUTER_API_KEY;
   const openCompatibleKey = env.OPENAI_COMPATIBLE_API_KEY;
+  const openAICodexAuthJson = env.OPENAI_CODEX_AUTH_JSON;
+  const openAICodexCliJs = env.OPENAI_CODEX_CLI_JS || DEFAULT_OPENAI_CODEX_CLI_JS;
 
-  if (requestedProvider === 'anthropic' || (!requestedProvider && !openRouterKey && !openCompatibleKey)) {
+  if (
+    requestedProvider === 'anthropic' ||
+    (!requestedProvider && !openRouterKey && !openCompatibleKey && !openAICodexAuthJson)
+  ) {
     return { provider: 'anthropic' };
+  }
+
+  if (requestedProvider === 'openai-codex' || (!requestedProvider && !openRouterKey && !openCompatibleKey && openAICodexAuthJson)) {
+    if (!openAICodexAuthJson) {
+      throw new Error('OpenAI Codex provider selected but OPENAI_CODEX_AUTH_JSON is missing');
+    }
+    if (!openAICodexCliJs) {
+      throw new Error('OpenAI Codex provider selected but OPENAI_CODEX_CLI_JS is missing');
+    }
+    return {
+      provider: 'openai-codex',
+      model: env.OPENAI_CODEX_MODEL || 'gpt-5.4',
+    };
   }
 
   const provider = requestedProvider === 'openrouter' || requestedProvider === 'openai-compatible'
@@ -375,6 +399,108 @@ function resolveProviderConfig(env: Record<string, string | undefined>): Provide
     baseUrl: env.OPENROUTER_BASE_URL || env.OPENAI_COMPATIBLE_BASE_URL || 'https://openrouter.ai/api/v1',
     model: env.OPENROUTER_MODEL || env.OPENAI_COMPATIBLE_MODEL || 'openai/gpt-4.1-mini',
   };
+}
+
+function getOpenAICodexCliJsPath(env: Record<string, string | undefined>): string {
+  const cliPath = (env.OPENAI_CODEX_CLI_JS || DEFAULT_OPENAI_CODEX_CLI_JS).trim();
+  if (!cliPath) {
+    throw new Error('OpenAI Codex CLI path is empty');
+  }
+  if (!fs.existsSync(cliPath)) {
+    throw new Error(`OpenAI Codex CLI entrypoint not found: ${cliPath}`);
+  }
+  return cliPath;
+}
+
+function normalizeCodexMessageText(text: string): string {
+  return text.replace(/\r\n/g, '\n').trim();
+}
+
+async function ensureOpenAICodexHome(
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  const authJson = env.OPENAI_CODEX_AUTH_JSON?.trim();
+  if (!authJson) {
+    throw new Error('OpenAI Codex auth.json payload is missing');
+  }
+
+  fs.mkdirSync(OPENAI_CODEX_HOME, { recursive: true });
+  fs.mkdirSync(OPENAI_CODEX_OUTPUT_DIR, { recursive: true });
+  fs.writeFileSync(OPENAI_CODEX_AUTH_PATH, authJson, { encoding: 'utf8', mode: 0o600 });
+}
+
+function scheduleOpenAICodexAuthCleanup(child: ReturnType<typeof spawnChildProcess>): void {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    try {
+      fs.unlinkSync(OPENAI_CODEX_AUTH_PATH);
+    } catch {
+      // Best effort: auth is re-written before each run anyway.
+    }
+  };
+
+  const timer = setTimeout(cleanup, 2000);
+  timer.unref?.();
+  child.once('exit', cleanup);
+  child.stdout?.once('data', cleanup);
+  child.stderr?.once('data', cleanup);
+}
+
+async function configureOpenAICodexMcpServer(
+  cliPath: string,
+  mcpServerPath: string,
+  containerInput: ContainerInput,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  const codexEnv = {
+    ...process.env,
+    ...env,
+    CODEX_HOME: OPENAI_CODEX_HOME,
+    HOME: '/home/node',
+  };
+
+  try {
+    await execFileAsync('node', [cliPath, 'mcp', 'remove', 'bioclaw'], {
+      cwd,
+      env: Object.fromEntries(
+        Object.entries(codexEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+      ),
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch {
+    // Ignore missing-server errors. We re-add the MCP config below.
+  }
+
+  const args = [
+    cliPath,
+    'mcp',
+    'add',
+    'bioclaw',
+    '--env',
+    `BIOCLAW_CHAT_JID=${containerInput.chatJid}`,
+    '--env',
+    `BIOCLAW_GROUP_FOLDER=${containerInput.groupFolder}`,
+    '--env',
+    `BIOCLAW_AGENT_ID=${containerInput.agentId || containerInput.groupFolder}`,
+    '--env',
+    `BIOCLAW_IS_MAIN=${containerInput.isMain ? '1' : '0'}`,
+    '--',
+    'node',
+    mcpServerPath,
+  ];
+
+  await execFileAsync('node', args, {
+    cwd,
+    env: Object.fromEntries(
+      Object.entries(codexEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    ),
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
 }
 
 interface SkillSummary {
@@ -469,6 +595,7 @@ function getBioSystemPrompt(): string {
     'Use tools to produce real results. Prefer the Bash tool for running shell commands, Python scripts, and bioinformatics workflows.',
     'Save output files to /workspace/group/ so users can access them.',
     'When you generate an image or document file (PNG, JPG, GIF, PDF, etc.), call the send_image tool so the user receives it in chat instead of only seeing a saved file path. The send_image tool works for ALL file types including PDF reports.',
+    'Use send_message only for short mid-task progress updates when a task is still running. Do not use send_message for the final answer — put the final user-facing response in the normal assistant reply.',
     "If you generate plots with Chinese labels via matplotlib, configure a Chinese-capable font first (try: 'Noto Sans CJK SC' or 'WenQuanYi Zen Hei') and set axes.unicode_minus=False to avoid missing glyphs and minus-sign issues.",
     'Prioritize figures that look scientific, readable on a phone screen, and suitable for demos or slide decks.',
     'Avoid overcrowded labels, tiny fonts, excessive legends, rainbow color noise, and default low-quality plotting styles.',
@@ -649,6 +776,8 @@ const SECRET_ENV_VARS = [
   'CLAUDE_CODE_OAUTH_TOKEN',
   'OPENROUTER_API_KEY',
   'OPENAI_COMPATIBLE_API_KEY',
+  'OPENAI_CODEX_AUTH_JSON',
+  'OPENAI_CODEX_CLI_JS',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -1369,6 +1498,207 @@ async function runOpenAICompatibleConversation(
   throw new Error(`OpenAI-compatible agent exceeded ${OPENAI_TOOL_MAX_ITERATIONS} tool iterations`);
 }
 
+async function runOpenAICodexConversation(
+  prompt: string,
+  sessionId: string | undefined,
+  containerInput: ContainerInput,
+  env: Record<string, string | undefined>,
+  cwd: string,
+  providerConfig: ProviderConfig,
+  mcpServerPath: string,
+): Promise<{ newSessionId: string; closedDuringQuery: boolean }> {
+  const cliPath = getOpenAICodexCliJsPath(env);
+  await ensureOpenAICodexHome(env);
+  await configureOpenAICodexMcpServer(cliPath, mcpServerPath, containerInput, cwd, env);
+
+  const outputPath = path.join(OPENAI_CODEX_OUTPUT_DIR, `${randomUUID()}.txt`);
+  const codexEnv = {
+    ...process.env,
+    ...env,
+    CODEX_HOME: OPENAI_CODEX_HOME,
+    HOME: '/home/node',
+  };
+  const safeEnv = Object.fromEntries(
+    Object.entries(codexEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+
+  const args = sessionId
+    ? [
+        cliPath,
+        'exec',
+        'resume',
+        '--json',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '-m',
+        providerConfig.model || 'gpt-5.4',
+        '-o',
+        outputPath,
+        sessionId,
+        prompt,
+      ]
+    : [
+        cliPath,
+        'exec',
+        '--json',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '-m',
+        providerConfig.model || 'gpt-5.4',
+        '-C',
+        cwd,
+        '-o',
+        outputPath,
+        prompt,
+      ];
+
+  const child = spawnChildProcess('node', args, {
+    cwd,
+    env: safeEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  scheduleOpenAICodexAuthCleanup(child);
+
+  let stderr = '';
+  let newSessionId = sessionId;
+  let lastAgentMessage = '';
+  const pendingSendMessageCalls = new Map<string, string>();
+  const completedSendMessageTexts = new Set<string>();
+
+  const stdoutLines = createInterface({ input: child.stdout! });
+  stdoutLines.on('line', (line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) {
+      return;
+    }
+
+    try {
+      const event = JSON.parse(trimmed) as {
+        type?: string;
+        thread_id?: string;
+        item?: {
+          id?: string;
+          type?: string;
+          text?: string;
+          tool?: string;
+          summary?: string[];
+          content?: string[];
+          status?: string;
+          error?: { message?: string } | null;
+          arguments?: { text?: unknown } | null;
+        };
+      };
+
+      if (event.type === 'thread.started' && typeof event.thread_id === 'string' && event.thread_id) {
+        newSessionId = event.thread_id;
+        return;
+      }
+
+      const item = event.item;
+      if (!item) return;
+
+      if (item.type === 'agent_message' && typeof item.text === 'string' && item.text.trim()) {
+        lastAgentMessage = item.text;
+        return;
+      }
+
+      if (item.type === 'mcp_tool_call' && item.tool) {
+        const toolText =
+          item.arguments && typeof item.arguments.text === 'string'
+            ? normalizeCodexMessageText(item.arguments.text)
+            : '';
+
+        if (event.type === 'item.started' && item.id && toolText) {
+          pendingSendMessageCalls.set(item.id, toolText);
+        }
+
+        if (item.tool === 'send_message' && event.type === 'item.completed') {
+          const completedText = toolText || (item.id ? pendingSendMessageCalls.get(item.id) || '' : '');
+          if (completedText && item.status !== 'failed' && !item.error) {
+            completedSendMessageTexts.add(completedText);
+          }
+        }
+
+        if (event.type === 'item.completed' && item.id) {
+          pendingSendMessageCalls.delete(item.id);
+        }
+      }
+
+      if (item.type === 'reasoning') {
+        const thinkingText = [...(item.summary || []), ...(item.content || [])].join('\n').trim();
+        if (thinkingText) {
+          writeIpcFile(IPC_MESSAGES_DIR, {
+            type: 'agent_step',
+            stepType: 'thinking',
+            text: thinkingText.slice(0, 2000),
+            groupFolder: containerInput.groupFolder,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return;
+      }
+
+      if (item.type === 'dynamic_tool_call' && item.tool) {
+        writeIpcFile(IPC_MESSAGES_DIR, {
+          type: 'agent_step',
+          stepType: 'tool_use',
+          toolName: item.tool,
+          groupFolder: containerInput.groupFolder,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch {
+      // Ignore non-protocol stdout lines.
+    }
+  });
+
+  child.stderr?.on('data', (chunk) => {
+    const text = chunk.toString('utf8');
+    stderr += text;
+    const trimmed = text.trim();
+    if (trimmed) {
+      log(`[codex] ${trimmed}`);
+    }
+  });
+
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code) => resolve(code ?? 1));
+  });
+  stdoutLines.close();
+
+  let finalMessage = '';
+  try {
+    finalMessage = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8').trim() : '';
+  } finally {
+    try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
+  }
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `Codex CLI exited with code ${exitCode}.\n${truncateOutput(stderr || finalMessage || 'Unknown Codex error.')}`,
+    );
+  }
+
+  const rawResultText = finalMessage || lastAgentMessage || null;
+  const normalizedResultText = rawResultText ? normalizeCodexMessageText(rawResultText) : '';
+  const resultText =
+    normalizedResultText && completedSendMessageTexts.has(normalizedResultText)
+      ? null
+      : rawResultText;
+  if (!newSessionId) {
+    throw new Error('Codex CLI completed without returning a thread id.');
+  }
+
+  writeOutput({
+    status: 'success',
+    result: resultText,
+    newSessionId,
+  });
+
+  return { newSessionId, closedDuringQuery: false };
+}
+
 async function main(): Promise<void> {
   let containerInput: ContainerInput;
 
@@ -1438,7 +1768,7 @@ async function main(): Promise<void> {
           log('Close sentinel consumed during query, exiting');
           break;
         }
-      } else {
+      } else if (providerConfig.provider === 'openai-compatible') {
         const queryResult = await runOpenAICompatibleConversation(
           prompt,
           sessionId,
@@ -1451,6 +1781,24 @@ async function main(): Promise<void> {
         sessionId = queryResult.newSessionId;
         resumeAt = undefined;
         openAiMessages = queryResult.messages;
+
+        if (queryResult.closedDuringQuery) {
+          log('Close sentinel consumed during query, exiting');
+          break;
+        }
+      } else {
+        const queryResult = await runOpenAICodexConversation(
+          prompt,
+          sessionId,
+          containerInput,
+          sdkEnv,
+          currentWorkdir,
+          providerConfig,
+          mcpServerPath,
+        );
+        sessionId = queryResult.newSessionId;
+        resumeAt = undefined;
+        openAiMessages = undefined;
 
         if (queryResult.closedDuringQuery) {
           log('Close sentinel consumed during query, exiting');

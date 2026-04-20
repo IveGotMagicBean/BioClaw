@@ -74,6 +74,17 @@ const MAX_UPLOAD_BYTES = Math.max(
   parseInt(process.env.LOCAL_WEB_MAX_UPLOAD_MB || '200', 10) * 1024 * 1024,
 );
 
+class BodyTooLargeError extends Error {
+  readonly maxBytes: number;
+
+  constructor(maxBytes: number) {
+    const maxMb = Math.max(1, Math.ceil(maxBytes / (1024 * 1024)));
+    super(`Request body too large (max ${maxMb} MB)`);
+    this.name = 'BodyTooLargeError';
+    this.maxBytes = maxBytes;
+  }
+}
+
 function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -84,17 +95,27 @@ function readBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<Buffer>
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let failed = false;
     req.on('data', (chunk) => {
+      if (failed) return;
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      chunks.push(buffer);
       size += buffer.length;
       if (size > maxBytes) {
-        reject(new Error('Request body too large'));
-        req.destroy();
+        failed = true;
+        req.pause();
+        reject(new BodyTooLargeError(maxBytes));
+        return;
       }
+      chunks.push(buffer);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    req.on('end', () => {
+      if (failed) return;
+      resolve(Buffer.concat(chunks));
+    });
+    req.on('error', (err) => {
+      if (failed) return;
+      reject(err);
+    });
   });
 }
 
@@ -163,8 +184,21 @@ export class LocalWebChannel implements Channel {
       try {
         await this.handleRequest(req, res);
       } catch (err) {
+        if (err instanceof BodyTooLargeError) {
+          try {
+            req.resume();
+          } catch {
+            /* ignore */
+          }
+          if (!res.headersSent && !res.writableEnded) {
+            sendJson(res, 413, { error: err.message });
+          }
+          return;
+        }
         logger.error({ err }, 'Local web request failed');
-        sendJson(res, 500, { error: 'Internal server error' });
+        if (!res.headersSent && !res.writableEnded) {
+          sendJson(res, 500, { error: 'Internal server error' });
+        }
       }
     });
 
@@ -289,6 +323,8 @@ export class LocalWebChannel implements Channel {
         assistantName: ASSISTANT_NAME,
         authToken: DASHBOARD_TOKEN || '',
         streamQs,
+        maxUploadBytes: MAX_UPLOAD_BYTES,
+        maxUploadMb: Math.max(1, Math.ceil(MAX_UPLOAD_BYTES / (1024 * 1024))),
       });
       return;
     }
@@ -537,6 +573,17 @@ export class LocalWebChannel implements Channel {
       const originalName = typeof fileNameHeader === 'string'
         ? decodeURIComponent(fileNameHeader)
         : 'upload.bin';
+      const contentLengthHeader = req.headers['content-length'];
+      const contentLengthRaw = Array.isArray(contentLengthHeader)
+        ? contentLengthHeader[0]
+        : contentLengthHeader;
+      const contentLength = contentLengthRaw ? parseInt(contentLengthRaw, 10) : NaN;
+      if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
+        sendJson(res, 413, {
+          error: `Request body too large (max ${Math.max(1, Math.ceil(MAX_UPLOAD_BYTES / (1024 * 1024)))} MB)`,
+        });
+        return;
+      }
       const body = await readBody(req, MAX_UPLOAD_BYTES);
       if (body.length === 0) {
         sendJson(res, 400, { error: 'Empty file upload' });
@@ -597,7 +644,7 @@ export class LocalWebChannel implements Channel {
 
     const now = new Date().toISOString();
     this.opts.onChatMetadata(chatJid, now, 'Local Web Chat');
-    this.opts.onMessage(chatJid, {
+    await this.opts.onMessage(chatJid, {
       id: `local-web-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       chat_jid: chatJid,
       sender,

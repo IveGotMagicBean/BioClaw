@@ -660,8 +660,8 @@ async function main(): Promise<void> {
     };
 
     localWeb = new LocalWebChannel({
-      onMessage: (_jid, msg) => {
-        void handleInboundMessage(msg).catch((err) => {
+      onMessage: async (_jid, msg) => {
+        await handleInboundMessage(msg).catch((err) => {
           logger.error({ err, chatJid: msg.chat_jid }, 'Failed to handle local web message');
         });
       },
@@ -762,6 +762,7 @@ async function main(): Promise<void> {
     registerGroup,
     getAgentIdForChat,
     getAgentWorkspaceFolder,
+    sendToChannel: (jid, text) => sendToChannel(jid, text),
     sendMessage: (jid, text) => sendToChannel(jid, text),
     sendImage: (jid, path, caption) => sendImageToChannel(jid, path, caption),
     syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),

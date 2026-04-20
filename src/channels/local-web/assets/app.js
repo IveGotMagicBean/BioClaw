@@ -10,6 +10,8 @@
   var assistantName = cfg.assistantName || 'Bioclaw';
   var AUTH_TOKEN = cfg.authToken || '';
   var STREAM_QS = cfg.streamQs || '';
+  var MAX_UPLOAD_BYTES = cfg.maxUploadBytes || (200 * 1024 * 1024);
+  var MAX_UPLOAD_MB = cfg.maxUploadMb || Math.max(1, Math.ceil(MAX_UPLOAD_BYTES / (1024 * 1024)));
   var THREAD_KEY = 'bioclaw-web-thread-jid';
   var THEME_KEY = 'bioclaw-theme';
   var COMPOSER_HEIGHT_KEY = 'bioclaw-composer-height';
@@ -77,6 +79,7 @@ const LANG_KEY = 'bioclaw-web-lang';
     try { traceShowStream = localStorage.getItem('bioclaw-trace-stream') === '1'; } catch (e) {}
 
     let lastSignature = '';
+    let messageRequestSeq = 0;
     let pollTimer = null;
     let chatEs = null;
     let lastConnMode = null;
@@ -186,6 +189,8 @@ const LANG_KEY = 'bioclaw-web-lang';
         copyFail: '复制失败',
         downloadFile: '下载文件',
         uploading: '正在上传…',
+        uploadingProgress: '正在上传… {percent}% ({loaded}/{total})',
+        uploadTooLarge: '文件过大，最大支持 {max} MB',
         uploadFail: '上传失败',
         sendFail: '发送失败',
         sidebarTitle: '工作区树',
@@ -294,6 +299,8 @@ const LANG_KEY = 'bioclaw-web-lang';
         copyFail: 'Copy failed',
         downloadFile: 'Download file',
         uploading: 'Uploading…',
+        uploadingProgress: 'Uploading… {percent}% ({loaded}/{total})',
+        uploadTooLarge: 'File too large. Maximum supported size is {max} MB',
         uploadFail: 'Upload failed',
         sendFail: 'Send failed',
         sidebarTitle: 'Workspace tree',
@@ -305,6 +312,61 @@ const LANG_KEY = 'bioclaw-web-lang';
     };
 
     function T() { return I18N[lang]; }
+
+    function formatBytes(bytes) {
+      if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+      var units = ['B', 'KB', 'MB', 'GB'];
+      var value = bytes;
+      var unitIndex = 0;
+      while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+      }
+      var digits = value >= 100 || unitIndex === 0 ? 0 : 1;
+      return value.toFixed(digits) + ' ' + units[unitIndex];
+    }
+
+    function formatUploadProgress(loaded, total) {
+      if (!Number.isFinite(total) || total <= 0) return T().uploading;
+      var percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+      return T().uploadingProgress
+        .replace('{percent}', String(percent))
+        .replace('{loaded}', formatBytes(loaded))
+        .replace('{total}', formatBytes(total));
+    }
+
+    function uploadFile(chatJid, file, onProgress) {
+      return new Promise(function (resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/upload?chatJid=' + encodeURIComponent(chatJid));
+        xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));
+        xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+        xhr.upload.onprogress = function (event) {
+          if (onProgress && event.lengthComputable) {
+            onProgress(event.loaded, event.total);
+          }
+        };
+        xhr.onerror = function () {
+          reject(new Error(T().uploadFail));
+        };
+        xhr.onload = function () {
+          var payload = {};
+          try {
+            payload = JSON.parse(xhr.responseText || '{}');
+          } catch (e) {}
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(payload);
+            return;
+          }
+          var errorMessage = payload && payload.error ? payload.error : '';
+          if (xhr.status === 413 && !errorMessage) {
+            errorMessage = T().uploadTooLarge.replace('{max}', String(MAX_UPLOAD_MB));
+          }
+          reject(new Error(errorMessage || T().uploadFail));
+        };
+        xhr.send(file);
+      });
+    }
 
     function applyLang(next) {
       lang = next === 'en' ? 'en' : 'zh';
@@ -1459,10 +1521,13 @@ const LANG_KEY = 'bioclaw-web-lang';
     }
 
     async function refreshMessages() {
+      var requestSeq = ++messageRequestSeq;
+      var requestedChatJid = chatJid;
       try {
-        var res = await fetch('/api/messages?scope=chat&chatJid=' + encodeURIComponent(chatJid));
+        var res = await fetch('/api/messages?scope=chat&chatJid=' + encodeURIComponent(requestedChatJid));
         if (!res.ok) return;
         var data = await res.json();
+        if (requestSeq !== messageRequestSeq || requestedChatJid !== chatJid) return;
         render(data.messages || []);
       } catch (e) {}
     }
@@ -1601,13 +1666,13 @@ const LANG_KEY = 'bioclaw-web-lang';
       sendBtn.disabled = true;
       try {
         if (file) {
-          setStatus(T().uploading);
-          var upRes = await fetch('/api/upload?chatJid=' + encodeURIComponent(chatJid), {
-            method: 'POST',
-            headers: { 'x-file-name': encodeURIComponent(file.name), 'content-type': file.type || 'application/octet-stream' },
-            body: file,
+          if (file.size > MAX_UPLOAD_BYTES) {
+            throw new Error(T().uploadTooLarge.replace('{max}', String(MAX_UPLOAD_MB)));
+          }
+          setStatus(formatUploadProgress(0, file.size));
+          await uploadFile(chatJid, file, function (loaded, total) {
+            setStatus(formatUploadProgress(loaded, total));
           });
-          if (!upRes.ok) throw new Error('UPLOAD_FAIL');
           fileInput.value = '';
           fileNameEl.textContent = T().noFile;
         }
@@ -1624,8 +1689,7 @@ const LANG_KEY = 'bioclaw-web-lang';
         await refreshMessages();
       } catch (e) {
         var msg = e && e.message;
-        if (msg === 'UPLOAD_FAIL') setStatus(T().uploadFail);
-        else if (msg === 'SEND_FAIL') setStatus(T().sendFail);
+        if (msg === 'SEND_FAIL') setStatus(T().sendFail);
         else setStatus(String(msg || ''));
       } finally {
         sendBtn.disabled = false;

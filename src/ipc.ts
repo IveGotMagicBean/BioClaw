@@ -19,6 +19,11 @@ import { getWorkspaceFolder } from './workspace.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendToChannel: (
+    jid: string,
+    text: string,
+    sourceWorkspaceFolder?: string,
+  ) => Promise<void>;
   sendImage: (jid: string, imagePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;

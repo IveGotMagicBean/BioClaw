@@ -33,7 +33,7 @@ export interface ContainerConfig {
 }
 
 export interface AgentRuntimeConfig {
-  provider?: 'anthropic' | 'openrouter' | 'openai-compatible';
+  provider?: 'anthropic' | 'openrouter' | 'openai-compatible' | 'openai-codex';
   model?: string;
   baseUrl?: string;
   workdir?: string; // Relative path under /workspace/group; '.' means workspace root

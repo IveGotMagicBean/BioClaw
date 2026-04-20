@@ -44,6 +44,7 @@ import {
   touchCurrentThreadForChat,
   upsertAgentDefinition,
 } from './session-manager.js';
+import { hasHostCodexAuth, hasHostCodexCli } from './codex-cli.js';
 import { Channel, ScheduledTask } from './types.js';
 import { listAllowedSshHosts, probeSshHost, runSshCommand } from './host-ssh.js';
 
@@ -78,6 +79,7 @@ interface ProviderAvailability {
   anthropic: boolean;
   openrouter: boolean;
   openaiCompatible: boolean;
+  openaiCodex: boolean;
 }
 
 const WORKSPACE_GROUP_ROOT = '/workspace/group';
@@ -190,20 +192,33 @@ function getProviderAvailability(): ProviderAvailability {
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
     openrouter: Boolean(process.env.OPENROUTER_API_KEY),
     openaiCompatible: Boolean(process.env.OPENAI_COMPATIBLE_API_KEY),
+    openaiCodex: hasHostCodexAuth() && hasHostCodexCli(),
   };
 }
 
-function resolveProviderName(value?: string): 'anthropic' | 'openrouter' | 'openai-compatible' {
-  if (value === 'openrouter' || value === 'openai-compatible' || value === 'anthropic') {
+function resolveProviderName(
+  value?: string,
+): 'anthropic' | 'openrouter' | 'openai-compatible' | 'openai-codex' {
+  if (
+    value === 'openrouter' ||
+    value === 'openai-compatible' ||
+    value === 'openai-codex' ||
+    value === 'anthropic'
+  ) {
     return value;
   }
 
-  if (process.env.MODEL_PROVIDER === 'openrouter' || process.env.MODEL_PROVIDER === 'openai-compatible') {
+  if (
+    process.env.MODEL_PROVIDER === 'openrouter' ||
+    process.env.MODEL_PROVIDER === 'openai-compatible' ||
+    process.env.MODEL_PROVIDER === 'openai-codex'
+  ) {
     return process.env.MODEL_PROVIDER;
   }
   if (process.env.MODEL_PROVIDER === 'anthropic') return 'anthropic';
   if (process.env.OPENROUTER_API_KEY) return 'openrouter';
   if (process.env.OPENAI_COMPATIBLE_API_KEY) return 'openai-compatible';
+  if (hasHostCodexAuth() && hasHostCodexCli()) return 'openai-codex';
   return 'anthropic';
 }
 
@@ -214,6 +229,9 @@ function resolveModelName(provider: string, overrideModel?: string): string {
   }
   if (provider === 'openai-compatible') {
     return process.env.OPENAI_COMPATIBLE_MODEL || 'openai/gpt-4.1-mini';
+  }
+  if (provider === 'openai-codex') {
+    return process.env.OPENAI_CODEX_MODEL || 'gpt-5.4';
   }
   return 'anthropic-default';
 }
@@ -620,10 +638,11 @@ export function getDoctorSnapshot(chatJid: string, deps: ControlPlaneDeps): Reco
     status:
       providerAvailability.anthropic ||
       providerAvailability.openrouter ||
-      providerAvailability.openaiCompatible
+      providerAvailability.openaiCompatible ||
+      providerAvailability.openaiCodex
         ? 'ok'
         : 'error',
-    detail: `anthropic=${providerAvailability.anthropic}, openrouter=${providerAvailability.openrouter}, openai-compatible=${providerAvailability.openaiCompatible}`,
+    detail: `anthropic=${providerAvailability.anthropic}, openrouter=${providerAvailability.openrouter}, openai-compatible=${providerAvailability.openaiCompatible}, openai-codex=${providerAvailability.openaiCodex}`,
   });
 
   checks.push({
@@ -682,6 +701,7 @@ function formatProviderList(currentProvider: string, currentModel: string): stri
     { name: 'anthropic', available: availability.anthropic },
     { name: 'openrouter', available: availability.openrouter },
     { name: 'openai-compatible', available: availability.openaiCompatible },
+    { name: 'openai-codex', available: availability.openaiCodex },
   ];
 
   return [
@@ -778,15 +798,23 @@ export async function executeControlCommand(
       }
 
       if (action === 'switch') {
-        const target = (tokens[2] || '').toLowerCase() as 'anthropic' | 'openrouter' | 'openai-compatible';
+        const target = (tokens[2] || '').toLowerCase() as
+          | 'anthropic'
+          | 'openrouter'
+          | 'openai-compatible'
+          | 'openai-codex';
         const availability = getProviderAvailability();
-        if (!['anthropic', 'openrouter', 'openai-compatible'].includes(target)) {
-          return { handled: true, response: 'Usage: /provider switch <anthropic|openrouter|openai-compatible>' };
+        if (!['anthropic', 'openrouter', 'openai-compatible', 'openai-codex'].includes(target)) {
+          return {
+            handled: true,
+            response: 'Usage: /provider switch <anthropic|openrouter|openai-compatible|openai-codex>',
+          };
         }
         const allowed = (
           (target === 'anthropic' && availability.anthropic) ||
           (target === 'openrouter' && availability.openrouter) ||
-          (target === 'openai-compatible' && availability.openaiCompatible)
+          (target === 'openai-compatible' && availability.openaiCompatible) ||
+          (target === 'openai-codex' && availability.openaiCodex)
         );
         if (!allowed) {
           return { handled: true, response: `Provider ${target} is not available in the current environment.` };
@@ -827,7 +855,7 @@ export async function executeControlCommand(
         if (provider === 'anthropic') {
           return {
             handled: true,
-            response: 'Per-agent model switching is currently only supported for openrouter and openai-compatible providers.',
+            response: 'Per-agent model switching is currently only supported for openrouter, openai-compatible, and openai-codex providers.',
           };
         }
         const updated = {
