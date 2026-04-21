@@ -45,6 +45,20 @@ import {
   upsertAgentDefinition,
 } from './session-manager.js';
 import { hasHostCodexAuth, hasHostCodexCli } from './codex-cli.js';
+import {
+  hasHostGeminiApiKey,
+  hasHostGeminiCli,
+  hasHostGeminiOAuth,
+} from './gemini-cli.js';
+import {
+  deletePreset,
+  formatPresetsList,
+  getPreset,
+  setDefaultPreset,
+  upsertPreset,
+  isValidPresetName,
+  PresetProvider,
+} from './provider-presets.js';
 import { Channel, ScheduledTask } from './types.js';
 import { listAllowedSshHosts, probeSshHost, runSshCommand } from './host-ssh.js';
 
@@ -80,7 +94,17 @@ interface ProviderAvailability {
   openrouter: boolean;
   openaiCompatible: boolean;
   openaiCodex: boolean;
+  gemini: boolean;
 }
+
+const PROVIDER_NAMES = [
+  'anthropic',
+  'openrouter',
+  'openai-compatible',
+  'openai-codex',
+  'gemini',
+] as const;
+type ProviderName = typeof PROVIDER_NAMES[number];
 
 const WORKSPACE_GROUP_ROOT = '/workspace/group';
 const DIR_HISTORY_LIMIT = 12;
@@ -106,6 +130,7 @@ const RESERVED_COMMANDS = new Set([
   'commands',
   'alias',
   'ssh',
+  'preset',
 ]);
 
 function escapeRegex(value: string): string {
@@ -193,32 +218,28 @@ function getProviderAvailability(): ProviderAvailability {
     openrouter: Boolean(process.env.OPENROUTER_API_KEY),
     openaiCompatible: Boolean(process.env.OPENAI_COMPATIBLE_API_KEY),
     openaiCodex: hasHostCodexAuth() && hasHostCodexCli(),
+    // Gemini is available if the CLI is installed AND either OAuth creds exist
+    // or GEMINI_API_KEY is set (direct Google AI Studio mode).
+    gemini: hasHostGeminiCli() && (hasHostGeminiOAuth() || hasHostGeminiApiKey()),
   };
 }
 
-function resolveProviderName(
-  value?: string,
-): 'anthropic' | 'openrouter' | 'openai-compatible' | 'openai-codex' {
-  if (
-    value === 'openrouter' ||
-    value === 'openai-compatible' ||
-    value === 'openai-codex' ||
-    value === 'anthropic'
-  ) {
-    return value;
-  }
+function isProviderName(value: unknown): value is ProviderName {
+  return typeof value === 'string' && (PROVIDER_NAMES as readonly string[]).includes(value);
+}
 
-  if (
-    process.env.MODEL_PROVIDER === 'openrouter' ||
-    process.env.MODEL_PROVIDER === 'openai-compatible' ||
-    process.env.MODEL_PROVIDER === 'openai-codex'
-  ) {
-    return process.env.MODEL_PROVIDER;
+function resolveProviderName(value?: string): ProviderName {
+  if (isProviderName(value)) return value;
+
+  if (isProviderName(process.env.MODEL_PROVIDER)) {
+    return process.env.MODEL_PROVIDER as ProviderName;
   }
-  if (process.env.MODEL_PROVIDER === 'anthropic') return 'anthropic';
   if (process.env.OPENROUTER_API_KEY) return 'openrouter';
   if (process.env.OPENAI_COMPATIBLE_API_KEY) return 'openai-compatible';
   if (hasHostCodexAuth() && hasHostCodexCli()) return 'openai-codex';
+  if (hasHostGeminiCli() && (hasHostGeminiOAuth() || hasHostGeminiApiKey())) {
+    return 'gemini';
+  }
   return 'anthropic';
 }
 
@@ -233,7 +254,23 @@ function resolveModelName(provider: string, overrideModel?: string): string {
   if (provider === 'openai-codex') {
     return process.env.OPENAI_CODEX_MODEL || 'gpt-5.4';
   }
+  if (provider === 'gemini') {
+    return process.env.GEMINI_MODEL || 'gemini-2.0-pro';
+  }
   return 'anthropic-default';
+}
+
+function isProviderAvailable(
+  provider: ProviderName,
+  availability: ProviderAvailability,
+): boolean {
+  switch (provider) {
+    case 'anthropic': return availability.anthropic;
+    case 'openrouter': return availability.openrouter;
+    case 'openai-compatible': return availability.openaiCompatible;
+    case 'openai-codex': return availability.openaiCodex;
+    case 'gemini': return availability.gemini;
+  }
 }
 
 function computeNextRun(
@@ -639,10 +676,11 @@ export function getDoctorSnapshot(chatJid: string, deps: ControlPlaneDeps): Reco
       providerAvailability.anthropic ||
       providerAvailability.openrouter ||
       providerAvailability.openaiCompatible ||
-      providerAvailability.openaiCodex
+      providerAvailability.openaiCodex ||
+      providerAvailability.gemini
         ? 'ok'
         : 'error',
-    detail: `anthropic=${providerAvailability.anthropic}, openrouter=${providerAvailability.openrouter}, openai-compatible=${providerAvailability.openaiCompatible}, openai-codex=${providerAvailability.openaiCodex}`,
+    detail: `anthropic=${providerAvailability.anthropic}, openrouter=${providerAvailability.openrouter}, openai-compatible=${providerAvailability.openaiCompatible}, openai-codex=${providerAvailability.openaiCodex}, gemini=${providerAvailability.gemini}`,
   });
 
   checks.push({
@@ -697,18 +735,18 @@ export function formatDoctorSnapshot(snapshot: Record<string, unknown>): string 
 
 function formatProviderList(currentProvider: string, currentModel: string): string {
   const availability = getProviderAvailability();
-  const providers = [
-    { name: 'anthropic', available: availability.anthropic },
-    { name: 'openrouter', available: availability.openrouter },
-    { name: 'openai-compatible', available: availability.openaiCompatible },
-    { name: 'openai-codex', available: availability.openaiCodex },
-  ];
+  const providers = PROVIDER_NAMES.map((name) => ({
+    name,
+    available: isProviderAvailable(name, availability),
+  }));
 
   return [
     `Current provider: ${currentProvider}`,
     `Current model: ${currentModel}`,
     'Available providers:',
-    ...providers.map((provider) => `- ${provider.name}${provider.available ? '' : ' (missing credentials)'}`),
+    ...providers.map((provider) =>
+      `- ${provider.name}${provider.available ? '' : ' (missing credentials)'}`,
+    ),
   ].join('\n');
 }
 
@@ -755,6 +793,7 @@ export async function executeControlCommand(
           '/doctor',
           '/provider [list|switch <name>]',
           '/model [show|switch <name>]',
+          '/preset [list|switch <name>|save <name>|delete <name>|default <name>]',
           '/memory [show|set <text>|clear]',
           '/dir [show|reset|-|<path>|<history-number>]',
           '/workspace [current|list|bind <workspace-folder>]',
@@ -798,25 +837,16 @@ export async function executeControlCommand(
       }
 
       if (action === 'switch') {
-        const target = (tokens[2] || '').toLowerCase() as
-          | 'anthropic'
-          | 'openrouter'
-          | 'openai-compatible'
-          | 'openai-codex';
+        const rawTarget = (tokens[2] || '').toLowerCase();
         const availability = getProviderAvailability();
-        if (!['anthropic', 'openrouter', 'openai-compatible', 'openai-codex'].includes(target)) {
+        if (!isProviderName(rawTarget)) {
           return {
             handled: true,
-            response: 'Usage: /provider switch <anthropic|openrouter|openai-compatible|openai-codex>',
+            response: `Usage: /provider switch <${PROVIDER_NAMES.join('|')}>`,
           };
         }
-        const allowed = (
-          (target === 'anthropic' && availability.anthropic) ||
-          (target === 'openrouter' && availability.openrouter) ||
-          (target === 'openai-compatible' && availability.openaiCompatible) ||
-          (target === 'openai-codex' && availability.openaiCodex)
-        );
-        if (!allowed) {
+        const target: ProviderName = rawTarget;
+        if (!isProviderAvailable(target, availability)) {
           return { handled: true, response: `Provider ${target} is not available in the current environment.` };
         }
         const updated = {
@@ -855,7 +885,7 @@ export async function executeControlCommand(
         if (provider === 'anthropic') {
           return {
             handled: true,
-            response: 'Per-agent model switching is currently only supported for openrouter, openai-compatible, and openai-codex providers.',
+            response: 'Per-agent model switching is currently only supported for openrouter, openai-compatible, openai-codex, and gemini providers.',
           };
         }
         const updated = {
@@ -870,6 +900,110 @@ export async function executeControlCommand(
         return { handled: true, response: `Switched model for agent ${agentId} to ${model}.` };
       }
       return { handled: true, response: 'Usage: /model [show|switch <model-name>]' };
+    }
+    case '/preset': {
+      if (!agent || !agentId) {
+        return { handled: true, response: 'No agent is bound to this chat.' };
+      }
+      const action = (tokens[1] || 'list').toLowerCase();
+      const currentProvider = resolveProviderName(agent.runtimeConfig?.provider);
+      const currentModel = resolveModelName(currentProvider, agent.runtimeConfig?.model);
+
+      if (action === 'list' || action === 'show') {
+        return {
+          handled: true,
+          response: formatPresetsList(currentProvider, currentModel),
+        };
+      }
+
+      if (action === 'switch' || action === 'use' || action === 'apply') {
+        const name = (tokens[2] || '').trim();
+        if (!name) {
+          return { handled: true, response: 'Usage: /preset switch <name>' };
+        }
+        const preset = getPreset(name);
+        if (!preset) {
+          return { handled: true, response: `Preset not found: ${name}. Use /preset list to see available presets.` };
+        }
+        if (!isProviderName(preset.provider)) {
+          return { handled: true, response: `Preset ${name} references unknown provider: ${preset.provider}` };
+        }
+        const availability = getProviderAvailability();
+        if (!isProviderAvailable(preset.provider, availability)) {
+          return {
+            handled: true,
+            response: `Preset ${name} uses ${preset.provider}, which is not available in this environment.`,
+          };
+        }
+        const updated = {
+          ...agent,
+          runtimeConfig: {
+            ...agent.runtimeConfig,
+            provider: preset.provider,
+            ...(preset.model ? { model: preset.model } : {}),
+            ...(preset.baseUrl ? { baseUrl: preset.baseUrl } : {}),
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        upsertAgentDefinition(updated);
+        const modelSuffix = preset.model ? ` · ${preset.model}` : '';
+        return {
+          handled: true,
+          response: `Applied preset ${name}: ${preset.provider}${modelSuffix}`,
+        };
+      }
+
+      if (action === 'save') {
+        const name = (tokens[2] || '').trim();
+        if (!name) {
+          return { handled: true, response: 'Usage: /preset save <name> [description]' };
+        }
+        if (!isValidPresetName(name)) {
+          return { handled: true, response: `Invalid preset name. Use lowercase letters, digits, '-' or '_'.` };
+        }
+        const description = tokens.slice(3).join(' ').trim() || undefined;
+        upsertPreset({
+          name,
+          provider: currentProvider as PresetProvider,
+          model: agent.runtimeConfig?.model,
+          baseUrl: agent.runtimeConfig?.baseUrl,
+          description,
+        });
+        return {
+          handled: true,
+          response: `Saved preset ${name}: ${currentProvider}${agent.runtimeConfig?.model ? ` · ${agent.runtimeConfig.model}` : ''}`,
+        };
+      }
+
+      if (action === 'delete' || action === 'remove' || action === 'rm') {
+        const name = (tokens[2] || '').trim();
+        if (!name) {
+          return { handled: true, response: 'Usage: /preset delete <name>' };
+        }
+        const removed = deletePreset(name);
+        return {
+          handled: true,
+          response: removed ? `Deleted preset ${name}.` : `Preset not found: ${name}.`,
+        };
+      }
+
+      if (action === 'default') {
+        const name = (tokens[2] || '').trim();
+        if (!name) {
+          return { handled: true, response: 'Usage: /preset default <name>' };
+        }
+        try {
+          setDefaultPreset(name);
+          return { handled: true, response: `Default preset set to ${name}.` };
+        } catch (err) {
+          return { handled: true, response: err instanceof Error ? err.message : String(err) };
+        }
+      }
+
+      return {
+        handled: true,
+        response: 'Usage: /preset [list|switch <name>|save <name> [desc]|delete <name>|default <name>]',
+      };
     }
     case '/memory': {
       if (!agent || !agentId) {

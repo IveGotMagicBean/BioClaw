@@ -35,7 +35,7 @@ interface ContainerInput {
   agentSystemPrompt?: string;
   workdir?: string;
   runtimeConfig?: {
-    provider?: 'anthropic' | 'openrouter' | 'openai-compatible' | 'openai-codex';
+    provider?: 'anthropic' | 'openrouter' | 'openai-compatible' | 'openai-codex' | 'gemini';
     model?: string;
     baseUrl?: string;
     enabledSkills?: string[];
@@ -88,7 +88,7 @@ const MAX_SKILL_DESCRIPTION_CHARS = 140;
 const execAsync = promisify(execChildProcess);
 const execFileAsync = promisify(execFileChildProcess);
 
-type ProviderKind = 'anthropic' | 'openai-compatible' | 'openai-codex';
+type ProviderKind = 'anthropic' | 'openai-compatible' | 'openai-codex' | 'gemini';
 
 interface ProviderConfig {
   provider: ProviderKind;
@@ -121,6 +121,11 @@ const OPENAI_CODEX_HOME = '/home/node/.claude/codex-home';
 const OPENAI_CODEX_AUTH_PATH = path.join(OPENAI_CODEX_HOME, 'auth.json');
 const OPENAI_CODEX_OUTPUT_DIR = path.join(OPENAI_CODEX_HOME, 'outputs');
 const DEFAULT_OPENAI_CODEX_CLI_JS = '/opt/host-node-modules/@openai/codex/bin/codex.js';
+
+const GEMINI_HOME = '/home/node/.claude/gemini-home';
+const GEMINI_OAUTH_PATH = path.join(GEMINI_HOME, 'oauth_creds.json');
+const GEMINI_OUTPUT_DIR = path.join(GEMINI_HOME, 'outputs');
+const DEFAULT_GEMINI_CLI_JS = '/opt/host-node-modules-gemini/@google/gemini-cli/dist/index.js';
 
 function getOpenAICompatibleSessionPath(sessionId: string): string {
   return path.join(OPENAI_SESSION_DIR, `${encodeURIComponent(sessionId)}.json`);
@@ -364,10 +369,18 @@ function resolveProviderConfig(env: Record<string, string | undefined>): Provide
   const openCompatibleKey = env.OPENAI_COMPATIBLE_API_KEY;
   const openAICodexAuthJson = env.OPENAI_CODEX_AUTH_JSON;
   const openAICodexCliJs = env.OPENAI_CODEX_CLI_JS || DEFAULT_OPENAI_CODEX_CLI_JS;
+  const geminiOAuthJson = env.GEMINI_OAUTH_CREDS_JSON;
+  const geminiApiKey = env.GEMINI_API_KEY;
+  const geminiCliJs = env.GEMINI_CLI_JS || DEFAULT_GEMINI_CLI_JS;
 
   if (
     requestedProvider === 'anthropic' ||
-    (!requestedProvider && !openRouterKey && !openCompatibleKey && !openAICodexAuthJson)
+    (!requestedProvider &&
+      !openRouterKey &&
+      !openCompatibleKey &&
+      !openAICodexAuthJson &&
+      !geminiOAuthJson &&
+      !geminiApiKey)
   ) {
     return { provider: 'anthropic' };
   }
@@ -382,6 +395,26 @@ function resolveProviderConfig(env: Record<string, string | undefined>): Provide
     return {
       provider: 'openai-codex',
       model: env.OPENAI_CODEX_MODEL || 'gpt-5.4',
+    };
+  }
+
+  if (
+    requestedProvider === 'gemini' ||
+    (!requestedProvider &&
+      !openRouterKey &&
+      !openCompatibleKey &&
+      (geminiOAuthJson || geminiApiKey))
+  ) {
+    if (!geminiOAuthJson && !geminiApiKey) {
+      throw new Error('Gemini provider selected but neither GEMINI_OAUTH_CREDS_JSON nor GEMINI_API_KEY is set');
+    }
+    if (!geminiCliJs) {
+      throw new Error('Gemini provider selected but GEMINI_CLI_JS is missing');
+    }
+    return {
+      provider: 'gemini',
+      apiKey: geminiApiKey,
+      model: env.GEMINI_MODEL || 'gemini-2.0-pro',
     };
   }
 
@@ -778,6 +811,9 @@ const SECRET_ENV_VARS = [
   'OPENAI_COMPATIBLE_API_KEY',
   'OPENAI_CODEX_AUTH_JSON',
   'OPENAI_CODEX_CLI_JS',
+  'GEMINI_OAUTH_CREDS_JSON',
+  'GEMINI_API_KEY',
+  'GEMINI_CLI_JS',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -1699,6 +1735,227 @@ async function runOpenAICodexConversation(
   return { newSessionId, closedDuringQuery: false };
 }
 
+// ── Gemini CLI provider ──────────────────────────────────────────────────
+//
+// Mirrors the Codex runner. Auth precedence:
+//   1. OAuth creds at ~/.gemini/oauth_creds.json (passed via
+//      GEMINI_OAUTH_CREDS_JSON env; written to GEMINI_HOME before exec)
+//   2. GEMINI_API_KEY (Google AI Studio direct)
+//
+// The CLI binary is mounted read-only from the host. We register BioClaw's
+// IPC MCP server with `gemini mcp add bioclaw ...` before each exec so the
+// agent can call our tools the same way the Codex path does.
+
+function getGeminiCliJsPath(env: Record<string, string | undefined>): string {
+  const cliPath = (env.GEMINI_CLI_JS || DEFAULT_GEMINI_CLI_JS).trim();
+  if (!cliPath) {
+    throw new Error('Gemini CLI path is empty');
+  }
+  if (!fs.existsSync(cliPath)) {
+    throw new Error(`Gemini CLI entrypoint not found: ${cliPath}`);
+  }
+  return cliPath;
+}
+
+function normalizeGeminiMessageText(text: string): string {
+  return text.replace(/\r\n/g, '\n').trim();
+}
+
+async function ensureGeminiHome(
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  fs.mkdirSync(GEMINI_HOME, { recursive: true });
+  fs.mkdirSync(GEMINI_OUTPUT_DIR, { recursive: true });
+  const oauthJson = env.GEMINI_OAUTH_CREDS_JSON?.trim();
+  if (oauthJson) {
+    fs.writeFileSync(GEMINI_OAUTH_PATH, oauthJson, { encoding: 'utf8', mode: 0o600 });
+  } else if (!env.GEMINI_API_KEY) {
+    throw new Error('Gemini auth missing: neither GEMINI_OAUTH_CREDS_JSON nor GEMINI_API_KEY set');
+  }
+}
+
+function scheduleGeminiAuthCleanup(child: ReturnType<typeof spawnChildProcess>): void {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    try { fs.unlinkSync(GEMINI_OAUTH_PATH); } catch { /* best effort */ }
+  };
+  const timer = setTimeout(cleanup, 2000);
+  timer.unref?.();
+  child.once('exit', cleanup);
+  child.stdout?.once('data', cleanup);
+  child.stderr?.once('data', cleanup);
+}
+
+async function configureGeminiMcpServer(
+  cliPath: string,
+  mcpServerPath: string,
+  containerInput: ContainerInput,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  const geminiEnv = {
+    ...process.env,
+    ...env,
+    GEMINI_HOME,
+    HOME: '/home/node',
+  };
+  const safeEnv = Object.fromEntries(
+    Object.entries(geminiEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+
+  try {
+    await execFileAsync('node', [cliPath, 'mcp', 'remove', 'bioclaw'], {
+      cwd,
+      env: safeEnv,
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch {
+    // Missing-server errors are ignored; we re-add the MCP config next.
+  }
+
+  const args = [
+    cliPath,
+    'mcp',
+    'add',
+    'bioclaw',
+    '--env',
+    `BIOCLAW_CHAT_JID=${containerInput.chatJid}`,
+    '--env',
+    `BIOCLAW_GROUP_FOLDER=${containerInput.groupFolder}`,
+    '--env',
+    `BIOCLAW_AGENT_ID=${containerInput.agentId || containerInput.groupFolder}`,
+    '--env',
+    `BIOCLAW_IS_MAIN=${containerInput.isMain ? '1' : '0'}`,
+    '--',
+    'node',
+    mcpServerPath,
+  ];
+
+  await execFileAsync('node', args, {
+    cwd,
+    env: safeEnv,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
+async function runGeminiConversation(
+  prompt: string,
+  sessionId: string | undefined,
+  containerInput: ContainerInput,
+  env: Record<string, string | undefined>,
+  cwd: string,
+  providerConfig: ProviderConfig,
+  mcpServerPath: string,
+): Promise<{ newSessionId: string; closedDuringQuery: boolean }> {
+  const cliPath = getGeminiCliJsPath(env);
+  await ensureGeminiHome(env);
+  await configureGeminiMcpServer(cliPath, mcpServerPath, containerInput, cwd, env);
+
+  const outputPath = path.join(GEMINI_OUTPUT_DIR, `${randomUUID()}.txt`);
+  const geminiEnv = {
+    ...process.env,
+    ...env,
+    GEMINI_HOME,
+    HOME: '/home/node',
+  };
+  const safeEnv = Object.fromEntries(
+    Object.entries(geminiEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+
+  // Gemini CLI flags mirror the Codex `exec` contract as closely as possible.
+  // `--yolo` bypasses approval prompts (analogous to Codex's
+  // --dangerously-bypass-approvals-and-sandbox); `--model` selects the model;
+  // `--include-directories` seeds the cwd. Session resume uses `--resume`
+  // when the CLI version supports it; otherwise each query is fresh.
+  const baseArgs = [
+    cliPath,
+    '--yolo',
+    '--model',
+    providerConfig.model || 'gemini-2.0-pro',
+    '--include-directories',
+    cwd,
+    '--output',
+    outputPath,
+    '--prompt',
+    prompt,
+  ];
+  const args = sessionId
+    ? [...baseArgs.slice(0, 1), '--resume', sessionId, ...baseArgs.slice(1)]
+    : baseArgs;
+
+  const child = spawnChildProcess('node', args, {
+    cwd,
+    env: safeEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  scheduleGeminiAuthCleanup(child);
+
+  let stderr = '';
+  let lastAgentMessage = '';
+  let newSessionId = sessionId;
+
+  const stdoutLines = createInterface({ input: child.stdout! });
+  stdoutLines.on('line', (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    // Gemini CLI emits stdout as free-form text by default; if a JSON event
+    // stream is enabled upstream in the future, we can parse it here.
+    // For now, accumulate the last non-empty line as a best-effort final
+    // message, and forward anything that looks like a session identifier.
+    if (/^session[:=]/i.test(trimmed)) {
+      const id = trimmed.split(/[:=]/, 2)[1]?.trim();
+      if (id) newSessionId = id;
+      return;
+    }
+    lastAgentMessage = trimmed;
+  });
+
+  child.stderr?.on('data', (chunk) => {
+    const text = chunk.toString('utf8');
+    stderr += text;
+    const t = text.trim();
+    if (t) log(`[gemini] ${t}`);
+  });
+
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code) => resolve(code ?? 1));
+  });
+  stdoutLines.close();
+
+  let finalMessage = '';
+  try {
+    finalMessage = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8').trim() : '';
+  } finally {
+    try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
+  }
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `Gemini CLI exited with code ${exitCode}.\n${truncateOutput(stderr || finalMessage || 'Unknown Gemini error.')}`,
+    );
+  }
+
+  const rawResultText = finalMessage || lastAgentMessage || null;
+  const resultText = rawResultText ? normalizeGeminiMessageText(rawResultText) : null;
+  // Gemini CLI does not yet emit persistent thread IDs reliably; synthesize
+  // one if the runner didn't pick a session marker out of stdout so the
+  // host side has a stable handle for this conversation.
+  const effectiveSessionId = newSessionId || sessionId || randomUUID();
+
+  writeOutput({
+    status: 'success',
+    result: resultText,
+    newSessionId: effectiveSessionId,
+  });
+
+  return { newSessionId: effectiveSessionId, closedDuringQuery: false };
+}
+
 async function main(): Promise<void> {
   let containerInput: ContainerInput;
 
@@ -1781,6 +2038,24 @@ async function main(): Promise<void> {
         sessionId = queryResult.newSessionId;
         resumeAt = undefined;
         openAiMessages = queryResult.messages;
+
+        if (queryResult.closedDuringQuery) {
+          log('Close sentinel consumed during query, exiting');
+          break;
+        }
+      } else if (providerConfig.provider === 'gemini') {
+        const queryResult = await runGeminiConversation(
+          prompt,
+          sessionId,
+          containerInput,
+          sdkEnv,
+          currentWorkdir,
+          providerConfig,
+          mcpServerPath,
+        );
+        sessionId = queryResult.newSessionId;
+        resumeAt = undefined;
+        openAiMessages = undefined;
 
         if (queryResult.closedDuringQuery) {
           log('Close sentinel consumed during query, exiting');
