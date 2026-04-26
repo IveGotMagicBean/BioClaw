@@ -1396,7 +1396,15 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
 
     function workspaceFolderForChat(jid) {
       var t = threads.find(function (x) { return x.chatJid === jid; });
-      return (t && t.workspaceFolder) || 'local-web';
+      if (t && t.workspaceFolder) return t.workspaceFolder;
+      // Fallback: derive workspace folder from chatJid pattern (thread-XXX@local.web → thread-XXX)
+      // This matters for fresh threads not yet in the threads list.
+      if (typeof jid === 'string') {
+        var atIdx = jid.indexOf('@');
+        var prefix = atIdx > 0 ? jid.slice(0, atIdx) : jid;
+        if (prefix && prefix !== 'local-web') return prefix;
+      }
+      return 'local-web';
     }
 
     async function processTraceTick() {
@@ -1416,8 +1424,8 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
         var data = await res.json();
         var events = (data.events || []).slice();
         if (!events.length) {
-          stopWorkStrip();
-          clearStreamingBubble();
+          // Don't clear the streaming bubble on empty events — trace data may
+          // simply not have arrived yet. Only stop work-strip after a grace period.
           return;
         }
         events.sort(function (a, b) { return (a.id || 0) - (b.id || 0); });
@@ -1428,17 +1436,19 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
         var lastPreview = '';
         var hadError = false;
         var steps = [];    // accumulated inline steps for current run
+        var lastEventKind = '';   // 'stream' | 'tool' | 'ipc' | 'thinking' | ''
 
         events.forEach(function (e) {
           var p = null;
           try { p = e.payload ? JSON.parse(e.payload) : null; } catch (_) { p = null; }
           if (e.type === 'run_start' || e.type === 'agent_query_start' || e.type === 'container_spawn') {
-            inRun = true; lastTool = null; lastPreview = ''; hadError = false; steps = [];
+            inRun = true; lastTool = null; lastPreview = ''; hadError = false; steps = []; lastEventKind = '';
             if (e.type === 'container_spawn' && p) {
               steps.push({ kind: 'spawn', label: 'Container started', detail: p.containerName || '' });
             }
           } else if (e.type === 'agent_thinking' && p) {
             steps.push({ kind: 'thinking', label: 'Thinking', detail: p.text || '' });
+            lastEventKind = 'thinking';
           } else if (e.type === 'agent_tool_use' && p) {
             lastTool = p.toolName || lastTool;
             var toolInput = p.toolInput;
@@ -1449,10 +1459,14 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
               try { detail = JSON.stringify(toolInput); } catch (_) {}
             }
             steps.push({ kind: 'tool', label: String(p.toolName || 'Tool'), detail: detail });
+            lastPreview = '';   // tool kicks in → reset preview so we don't keep the old one stuck
+            lastEventKind = 'tool';
           } else if (e.type === 'ipc_send' && p) {
             steps.push({ kind: 'ipc', label: 'IPC', detail: p.preview || p.caption || p.filePath || '' });
+            lastEventKind = 'ipc';
           } else if (e.type === 'stream_output' && p) {
             if (p.preview) lastPreview = p.preview;
+            lastEventKind = 'stream';
           } else if (e.type === 'run_end') {
             inRun = false;
           } else if (e.type === 'run_error') {
@@ -1476,8 +1490,34 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
             var pillLabel = streamingBubble.querySelector('.thinking-pill-label');
             if (pillLabel) pillLabel.textContent = labelText;
           }
-          // Don't show streaming preview in chat — process details belong in lab trace only.
-          // The final result will be rendered when the run ends.
+          // Decide what to show in the bubble:
+          //  - If a tool/thinking step just happened (steps exist but no fresh stream),
+          //    show a compact step summary so the user knows what's happening.
+          //  - If the agent is currently streaming text (lastEventKind === 'stream'),
+          //    show the live partial response — that's the answer being typed out.
+          if (streamingBubble) {
+            var contentEl = streamingBubble.querySelector('.content');
+            if (contentEl) {
+              var html = '';
+              if (steps.length) {
+                var statusLines = steps.slice(-5).map(function (s) {
+                  if (s.kind === 'thinking') return '💭 ' + esc(truncateText(s.detail, 120));
+                  if (s.kind === 'tool') return '⚙ ' + esc(s.label) + (s.detail ? '：' + esc(truncateText(s.detail, 80)) : '');
+                  if (s.kind === 'spawn') return '▶ ' + esc(s.detail);
+                  if (s.kind === 'ipc') return '↗ ' + esc(truncateText(s.detail, 80));
+                  return '· ' + esc(truncateText(s.detail || s.label, 100));
+                });
+                html += '<div class="streaming-status">' + statusLines.join('<br>') + '</div>';
+              }
+              if (lastEventKind === 'stream' && lastPreview) {
+                html += '<div class="streaming-text">' + markdownToSafeHtml(lastPreview) + '</div>';
+              }
+              if (html && contentEl.innerHTML !== html) {
+                contentEl.innerHTML = html;
+                scrollChatToBottom();
+              }
+            }
+          }
           // Hint that trace has fresh content if user hasn't opened it
           if (openTraceBtn && !document.body.classList.contains('trace-open')) {
             openTraceBtn.classList.add('has-activity');
@@ -1488,58 +1528,12 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
           } else {
             stopWorkStrip();
           }
-          // Fetch final messages so the latest bot message is in DB
-          await refreshMessages();
-          // Find the latest bot message timestamp; use it to tag the streaming
-          // bubble so render() skips that message (the streaming bubble *is* it).
-          var latestBotTs = null;
-          try {
-            var resp = await fetch('/api/messages?scope=chat&chatJid=' + encodeURIComponent(chatJid));
-            if (resp.ok) {
-              var d = await resp.json();
-              var msgs = d.messages || [];
-              for (var k = msgs.length - 1; k >= 0; k--) {
-                if (msgs[k].is_from_me) { latestBotTs = msgs[k].timestamp; break; }
-              }
-            }
-          } catch (_) {}
-          if (streamingBubble && latestBotTs) {
-            // Replace the (possibly truncated) streaming preview with the FULL final content
-            try {
-              var fr = await fetch('/api/messages?scope=chat&chatJid=' + encodeURIComponent(chatJid));
-              if (fr.ok) {
-                var fd = await fr.json();
-                var allMsgs = fd.messages || [];
-                for (var jj = allMsgs.length - 1; jj >= 0; jj--) {
-                  if (allMsgs[jj].is_from_me && allMsgs[jj].timestamp === latestBotTs) {
-                    var contentEl = streamingBubble.querySelector('.content');
-                    if (contentEl) contentEl.innerHTML = renderBody(allMsgs[jj].content);
-                    var bubbleEl = streamingBubble.querySelector('.bubble');
-                    if (bubbleEl) {
-                      // ensure markdown enhancements (copy buttons on code blocks)
-                      enhanceCodeBlocks(bubbleEl);
-                      // append a footer copy button if not already there
-                      if (!bubbleEl.querySelector('.bubble-actions')) {
-                        var footer = document.createElement('div');
-                        footer.className = 'bubble-actions';
-                        var encoded = escAttr(encodeURIComponent(String(allMsgs[jj].content)));
-                        footer.innerHTML = '<button type="button" class="bubble-action-btn" data-copy="' + encoded + '">' +
-                          '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
-                          '<span class="bubble-action-label">' + esc(T().copy) + '</span>' +
-                        '</button>';
-                        bubbleEl.appendChild(footer);
-                      }
-                    }
-                    break;
-                  }
-                }
-              }
-            } catch (_) {}
-          }
-          finalizeStreamingBubble(latestBotTs);
-          // Re-render now that we've tagged the finalized bubble — render() will
-          // skip the bot message that's already represented by the inline bubble.
-          lastSignature = '';   // force re-render
+          // Run is over per the trace, but the final message may not be in the
+          // DB yet (race between run_end recording and sendToChannel). Don't
+          // touch the streaming bubble here — let the chat SSE trigger render()
+          // when the message actually arrives, and render() will finalize the
+          // bubble in-place (lines ~2005-2037). This avoids the "bubble
+          // disappears, full answer pops in later" flicker.
           await refreshMessages();
         }
       } catch (e) {}
@@ -2024,7 +2018,10 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
         streamingLocked = true;
       }
       // Preserve any *active* streaming bubble across the rebuild.
-      var preservedStreamingBubble = latestIsAssistant ? null : streamingBubble;
+      // Keep it even when the latest message is from the assistant — the run
+      // may still be in progress (multi-turn tool loop) and we don't want to
+      // discard the bubble mid-conversation.
+      var preservedStreamingBubble = (streamingBubble && streamingBubble.hasAttribute('data-streaming')) ? streamingBubble : null;
       if (preservedStreamingBubble && preservedStreamingBubble.parentNode) {
         preservedStreamingBubble.parentNode.removeChild(preservedStreamingBubble);
       }
