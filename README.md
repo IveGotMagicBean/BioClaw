@@ -75,6 +75,7 @@ Built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) architecture with 
 - [Overview](#overview)
 - [What's New](#whats-new)
 - [Quick Start](#quick-start)
+- [Beginner Guide](#beginner-guide)
 - [Messaging channels](#messaging-channels)
 - [Demo Examples](#demo-examples)
 - [System Architecture](#system-architecture)
@@ -114,6 +115,17 @@ Recent updates make BioClaw feel much closer to a real multi-chat research works
 - **Quick OpenRouter health check** — `npm run check:openrouter` sends a tiny test request using your current `.env` so you can tell whether the key works before debugging the full app.
 
 ## Quick Start
+
+If you're not yet comfortable with Docker, `.env`, workspaces, allowlists, or mounts, start here instead:
+
+- **[docs/BEGINNER_GUIDE.md](docs/BEGINNER_GUIDE.md)**
+  A step-by-step onboarding doc covering API/provider switching, what a workspace is, when you need an allowlist, how to configure extra mounts, and how to verify the results.
+
+## Beginner Guide
+
+Zero-to-first-analysis walkthrough for non-technical users:
+
+- **[docs/BEGINNER_GUIDE.md](docs/BEGINNER_GUIDE.md)**
 
 ### Prerequisites
 
@@ -167,6 +179,7 @@ BioClaw now supports two provider paths:
 
 - **Anthropic** — default, keeps the original Claude Agent SDK flow
 - **OpenRouter / OpenAI-compatible** — optional path for OpenRouter and similar `/chat/completions` providers
+- **OpenAI Codex login** — reuse a local `codex login` / ChatGPT sign-in, no API key required
 
 Create a `.env` file in the project root and choose **one** of the following setups.
 
@@ -197,6 +210,20 @@ OPENAI_COMPATIBLE_API_KEY=your_api_key
 OPENAI_COMPATIBLE_BASE_URL=https://your-provider.example/v1
 OPENAI_COMPATIBLE_MODEL=your-model-name
 ```
+
+**Option C — Reuse local Codex CLI login**
+
+```bash
+MODEL_PROVIDER=openai-codex
+OPENAI_CODEX_MODEL=gpt-5.4
+```
+
+Requirements:
+
+- `codex` is installed on the host and already signed in
+- `~/.codex/auth.json` exists and is valid
+
+BioClaw will reuse the host Codex login and keep Codex thread state inside the group session directory so GPT sessions can resume across messages.
 
 After updating `.env`, restart BioClaw:
 

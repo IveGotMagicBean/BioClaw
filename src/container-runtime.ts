@@ -12,6 +12,13 @@ import {
   CONTAINER_RUNTIME,
   GROUPS_DIR,
 } from './config.js';
+import {
+  HOST_CODEX_NODE_MODULES_CONTAINER_PATH,
+  resolveHostCodexCliNodeModulesRoot,
+} from './codex-cli.js';
+import { resolveHostGeminiCliNodeModulesRoot } from './gemini-cli.js';
+
+const HOST_GEMINI_NODE_MODULES_CONTAINER_PATH = '/opt/host-node-modules-gemini';
 import { ensureGroupDir, ensureGroupIpcDir, ensureGroupSessionDir } from './group-folder.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -83,6 +90,24 @@ export function buildVolumeMounts(
     containerPath: '/workspace/ipc',
     readonly: false,
   });
+
+  const hostCodexNodeModulesRoot = resolveHostCodexCliNodeModulesRoot();
+  if (hostCodexNodeModulesRoot) {
+    mounts.push({
+      hostPath: hostCodexNodeModulesRoot,
+      containerPath: HOST_CODEX_NODE_MODULES_CONTAINER_PATH,
+      readonly: true,
+    });
+  }
+
+  const hostGeminiNodeModulesRoot = resolveHostGeminiCliNodeModulesRoot();
+  if (hostGeminiNodeModulesRoot && hostGeminiNodeModulesRoot !== hostCodexNodeModulesRoot) {
+    mounts.push({
+      hostPath: hostGeminiNodeModulesRoot,
+      containerPath: HOST_GEMINI_NODE_MODULES_CONTAINER_PATH,
+      readonly: true,
+    });
+  }
 
   // Mount agent-runner source from host
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');

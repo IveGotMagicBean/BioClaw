@@ -16,11 +16,13 @@
 
 import fs from 'fs';
 import path from 'path';
-import { exec as execChildProcess } from 'child_process';
+import { exec as execChildProcess, execFile as execFileChildProcess, spawn as spawnChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 import { promisify } from 'util';
+import { createInterface } from 'readline';
+import { detectTaskRouting, mergeSkillSelections } from './task-routing.js';
 
 interface ContainerInput {
   prompt: string;
@@ -33,7 +35,7 @@ interface ContainerInput {
   agentSystemPrompt?: string;
   workdir?: string;
   runtimeConfig?: {
-    provider?: 'anthropic' | 'openrouter' | 'openai-compatible';
+    provider?: 'anthropic' | 'openrouter' | 'openai-compatible' | 'openai-codex' | 'gemini';
     model?: string;
     baseUrl?: string;
     enabledSkills?: string[];
@@ -84,8 +86,9 @@ const SKILLS_ROOT = '/home/node/.claude/skills';
 const MAX_SKILL_SUMMARY_LINES = 18;
 const MAX_SKILL_DESCRIPTION_CHARS = 140;
 const execAsync = promisify(execChildProcess);
+const execFileAsync = promisify(execFileChildProcess);
 
-type ProviderKind = 'anthropic' | 'openai-compatible';
+type ProviderKind = 'anthropic' | 'openai-compatible' | 'openai-codex' | 'gemini';
 
 interface ProviderConfig {
   provider: ProviderKind;
@@ -114,6 +117,15 @@ interface OpenAIChatResponse {
 }
 
 const OPENAI_SESSION_DIR = '/home/node/.claude/openai-compatible-sessions';
+const OPENAI_CODEX_HOME = '/home/node/.claude/codex-home';
+const OPENAI_CODEX_AUTH_PATH = path.join(OPENAI_CODEX_HOME, 'auth.json');
+const OPENAI_CODEX_OUTPUT_DIR = path.join(OPENAI_CODEX_HOME, 'outputs');
+const DEFAULT_OPENAI_CODEX_CLI_JS = '/opt/host-node-modules/@openai/codex/bin/codex.js';
+
+const GEMINI_HOME = '/home/node/.claude/gemini-home';
+const GEMINI_OAUTH_PATH = path.join(GEMINI_HOME, 'oauth_creds.json');
+const GEMINI_OUTPUT_DIR = path.join(GEMINI_HOME, 'outputs');
+const DEFAULT_GEMINI_CLI_JS = '/opt/host-node-modules-gemini/@google/gemini-cli/dist/index.js';
 
 function getOpenAICompatibleSessionPath(sessionId: string): string {
   return path.join(OPENAI_SESSION_DIR, `${encodeURIComponent(sessionId)}.json`);
@@ -272,12 +284,28 @@ function resolveWorkdir(workdir?: string): string {
   return target;
 }
 
-function buildEnabledSkillsBlock(enabledSkills?: string[]): string {
-  const skills = Array.isArray(enabledSkills)
-    ? enabledSkills.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-    : [];
-  if (skills.length === 0) return '';
-  return `\n\n[Preferred skill modules]\nPrefer these installed skills first when they are relevant to the task:\n${skills.map((skill) => `- ${skill}`).join('\n')}\n`;
+function buildEnabledSkillsBlock(preferredSkills?: string[], requiredSkills?: string[]): string {
+  const { preferred, required } = mergeSkillSelections(preferredSkills, requiredSkills);
+  const sections: string[] = [];
+
+  if (required.length > 0) {
+    sections.push(
+      '[Required skill modules]',
+      'You MUST use these installed skills for this task when they are relevant:',
+      ...required.map((skill) => `- ${skill}`),
+    );
+  }
+
+  if (preferred.length > 0) {
+    sections.push(
+      '[Preferred skill modules]',
+      'Prefer these installed skills first when they are relevant to the task:',
+      ...preferred.map((skill) => `- ${skill}`),
+    );
+  }
+
+  if (sections.length === 0) return '';
+  return `\n\n${sections.join('\n')}\n`;
 }
 
 function writeIpcFile(dir: string, data: object): string {
@@ -339,9 +367,55 @@ function resolveProviderConfig(env: Record<string, string | undefined>): Provide
   const requestedProvider = (env.MODEL_PROVIDER || '').trim().toLowerCase();
   const openRouterKey = env.OPENROUTER_API_KEY;
   const openCompatibleKey = env.OPENAI_COMPATIBLE_API_KEY;
+  const openAICodexAuthJson = env.OPENAI_CODEX_AUTH_JSON;
+  const openAICodexCliJs = env.OPENAI_CODEX_CLI_JS || DEFAULT_OPENAI_CODEX_CLI_JS;
+  const geminiOAuthJson = env.GEMINI_OAUTH_CREDS_JSON;
+  const geminiApiKey = env.GEMINI_API_KEY;
+  const geminiCliJs = env.GEMINI_CLI_JS || DEFAULT_GEMINI_CLI_JS;
 
-  if (requestedProvider === 'anthropic' || (!requestedProvider && !openRouterKey && !openCompatibleKey)) {
+  if (
+    requestedProvider === 'anthropic' ||
+    (!requestedProvider &&
+      !openRouterKey &&
+      !openCompatibleKey &&
+      !openAICodexAuthJson &&
+      !geminiOAuthJson &&
+      !geminiApiKey)
+  ) {
     return { provider: 'anthropic' };
+  }
+
+  if (requestedProvider === 'openai-codex' || (!requestedProvider && !openRouterKey && !openCompatibleKey && openAICodexAuthJson)) {
+    if (!openAICodexAuthJson) {
+      throw new Error('OpenAI Codex provider selected but OPENAI_CODEX_AUTH_JSON is missing');
+    }
+    if (!openAICodexCliJs) {
+      throw new Error('OpenAI Codex provider selected but OPENAI_CODEX_CLI_JS is missing');
+    }
+    return {
+      provider: 'openai-codex',
+      model: env.OPENAI_CODEX_MODEL || 'gpt-5.4',
+    };
+  }
+
+  if (
+    requestedProvider === 'gemini' ||
+    (!requestedProvider &&
+      !openRouterKey &&
+      !openCompatibleKey &&
+      (geminiOAuthJson || geminiApiKey))
+  ) {
+    if (!geminiOAuthJson && !geminiApiKey) {
+      throw new Error('Gemini provider selected but neither GEMINI_OAUTH_CREDS_JSON nor GEMINI_API_KEY is set');
+    }
+    if (!geminiCliJs) {
+      throw new Error('Gemini provider selected but GEMINI_CLI_JS is missing');
+    }
+    return {
+      provider: 'gemini',
+      apiKey: geminiApiKey,
+      model: env.GEMINI_MODEL || 'gemini-2.0-pro',
+    };
   }
 
   const provider = requestedProvider === 'openrouter' || requestedProvider === 'openai-compatible'
@@ -358,6 +432,108 @@ function resolveProviderConfig(env: Record<string, string | undefined>): Provide
     baseUrl: env.OPENROUTER_BASE_URL || env.OPENAI_COMPATIBLE_BASE_URL || 'https://openrouter.ai/api/v1',
     model: env.OPENROUTER_MODEL || env.OPENAI_COMPATIBLE_MODEL || 'openai/gpt-4.1-mini',
   };
+}
+
+function getOpenAICodexCliJsPath(env: Record<string, string | undefined>): string {
+  const cliPath = (env.OPENAI_CODEX_CLI_JS || DEFAULT_OPENAI_CODEX_CLI_JS).trim();
+  if (!cliPath) {
+    throw new Error('OpenAI Codex CLI path is empty');
+  }
+  if (!fs.existsSync(cliPath)) {
+    throw new Error(`OpenAI Codex CLI entrypoint not found: ${cliPath}`);
+  }
+  return cliPath;
+}
+
+function normalizeCodexMessageText(text: string): string {
+  return text.replace(/\r\n/g, '\n').trim();
+}
+
+async function ensureOpenAICodexHome(
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  const authJson = env.OPENAI_CODEX_AUTH_JSON?.trim();
+  if (!authJson) {
+    throw new Error('OpenAI Codex auth.json payload is missing');
+  }
+
+  fs.mkdirSync(OPENAI_CODEX_HOME, { recursive: true });
+  fs.mkdirSync(OPENAI_CODEX_OUTPUT_DIR, { recursive: true });
+  fs.writeFileSync(OPENAI_CODEX_AUTH_PATH, authJson, { encoding: 'utf8', mode: 0o600 });
+}
+
+function scheduleOpenAICodexAuthCleanup(child: ReturnType<typeof spawnChildProcess>): void {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    try {
+      fs.unlinkSync(OPENAI_CODEX_AUTH_PATH);
+    } catch {
+      // Best effort: auth is re-written before each run anyway.
+    }
+  };
+
+  const timer = setTimeout(cleanup, 2000);
+  timer.unref?.();
+  child.once('exit', cleanup);
+  child.stdout?.once('data', cleanup);
+  child.stderr?.once('data', cleanup);
+}
+
+async function configureOpenAICodexMcpServer(
+  cliPath: string,
+  mcpServerPath: string,
+  containerInput: ContainerInput,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  const codexEnv = {
+    ...process.env,
+    ...env,
+    CODEX_HOME: OPENAI_CODEX_HOME,
+    HOME: '/home/node',
+  };
+
+  try {
+    await execFileAsync('node', [cliPath, 'mcp', 'remove', 'bioclaw'], {
+      cwd,
+      env: Object.fromEntries(
+        Object.entries(codexEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+      ),
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch {
+    // Ignore missing-server errors. We re-add the MCP config below.
+  }
+
+  const args = [
+    cliPath,
+    'mcp',
+    'add',
+    'bioclaw',
+    '--env',
+    `BIOCLAW_CHAT_JID=${containerInput.chatJid}`,
+    '--env',
+    `BIOCLAW_GROUP_FOLDER=${containerInput.groupFolder}`,
+    '--env',
+    `BIOCLAW_AGENT_ID=${containerInput.agentId || containerInput.groupFolder}`,
+    '--env',
+    `BIOCLAW_IS_MAIN=${containerInput.isMain ? '1' : '0'}`,
+    '--',
+    'node',
+    mcpServerPath,
+  ];
+
+  await execFileAsync('node', args, {
+    cwd,
+    env: Object.fromEntries(
+      Object.entries(codexEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    ),
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
 }
 
 interface SkillSummary {
@@ -451,7 +627,8 @@ function getBioSystemPrompt(): string {
     'When users ask biology questions, prefer running actual analysis over giving theoretical answers.',
     'Use tools to produce real results. Prefer the Bash tool for running shell commands, Python scripts, and bioinformatics workflows.',
     'Save output files to /workspace/group/ so users can access them.',
-    'When you generate an image file (such as PNG, JPG, or GIF), call the send_image tool so the user receives it in chat instead of only seeing a saved file path.',
+    'When you generate an image or document file (PNG, JPG, GIF, PDF, etc.), call the send_image tool so the user receives it in chat instead of only seeing a saved file path. The send_image tool works for ALL file types including PDF reports.',
+    'Use send_message only for short mid-task progress updates when a task is still running. Do not use send_message for the final answer — put the final user-facing response in the normal assistant reply.',
     "If you generate plots with Chinese labels via matplotlib, configure a Chinese-capable font first (try: 'Noto Sans CJK SC' or 'WenQuanYi Zen Hei') and set axes.unicode_minus=False to avoid missing glyphs and minus-sign issues.",
     'Prioritize figures that look scientific, readable on a phone screen, and suitable for demos or slide decks.',
     'Avoid overcrowded labels, tiny fonts, excessive legends, rainbow color noise, and default low-quality plotting styles.',
@@ -478,6 +655,7 @@ function getBioSystemPrompt(): string {
           'Do not claim a skill is unavailable if it appears in the installed list above.',
           'To use a skill, read its full instructions with: read_file({ file_path: "/home/node/.claude/skills/<skill-name>/SKILL.md" })',
           'Always read the relevant SKILL.md before executing a skill-related task — the summaries above are abbreviated.',
+          'CRITICAL: When a skill provides executable scripts or pipelines (e.g. python sec_pipeline.py), you MUST run them as instructed. Do NOT manually reimplement the same analysis logic — the bundled scripts are tested, produce standardized outputs (PDF reports, figures, JSON), and are the expected deliverable. Manual reimplementation is an error.',
         ]
       : []),
     'For publication-ready figures (Cell/Nature/Science style): use cnsplots (volcano, box, heatmap, etc.). For genome browser tracks: use pyGenomeTracks with make_tracks_file + pyGenomeTracks.',
@@ -485,6 +663,36 @@ function getBioSystemPrompt(): string {
     'Keep messages concise and action-oriented, and mention important output file paths when relevant.',
     '',
   ].join('\n');
+}
+
+function buildGlobalSystemPrompt(
+  prompt: string,
+  currentWorkdir: string,
+  containerInput: ContainerInput,
+): string {
+  const bioSystemPrompt = getBioSystemPrompt()
+    .replace('send_image tool', 'mcp__bioclaw__send_image')
+    .replace('Use tools to produce real results. Prefer the Bash tool for running shell commands, Python scripts, and bioinformatics workflows.', 'Write and execute Python scripts or bash commands to produce real results.');
+
+  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
+  const globalContent = fs.existsSync(globalClaudeMdPath)
+    ? fs.readFileSync(globalClaudeMdPath, 'utf-8')
+    : '';
+  const agentMemoryBlock = containerInput.agentSystemPrompt
+    ? `\n\n[Agent memory]\n${containerInput.agentSystemPrompt.trim()}\n`
+    : '';
+  const taskRouting = detectTaskRouting(prompt);
+  if (taskRouting) {
+    log(`Applied automatic task routing: ${taskRouting.matchedRoute}`);
+  }
+  const enabledSkillsBlock = buildEnabledSkillsBlock(
+    containerInput.runtimeConfig?.enabledSkills,
+    taskRouting?.requiredSkills,
+  );
+  const routingBlock = taskRouting?.systemBlock || '';
+  const workdirBlock = `\n\n[Current working directory]\n${currentWorkdir}\n`;
+
+  return bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + routingBlock + workdirBlock;
 }
 
 function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
@@ -601,6 +809,11 @@ const SECRET_ENV_VARS = [
   'CLAUDE_CODE_OAUTH_TOKEN',
   'OPENROUTER_API_KEY',
   'OPENAI_COMPATIBLE_API_KEY',
+  'OPENAI_CODEX_AUTH_JSON',
+  'OPENAI_CODEX_CLI_JS',
+  'GEMINI_OAUTH_CREDS_JSON',
+  'GEMINI_API_KEY',
+  'GEMINI_CLI_JS',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -813,23 +1026,7 @@ async function runQuery(
   let resultCount = 0;
   const currentWorkdir = resolveWorkdir(containerInput.workdir);
 
-  // BioClaw: inject biology-specific system context
-  const bioSystemPrompt = getBioSystemPrompt()
-    .replace('send_image tool', 'mcp__bioclaw__send_image')
-    .replace('Use tools to produce real results. Prefer the Bash tool for running shell commands, Python scripts, and bioinformatics workflows.', 'Write and execute Python scripts or bash commands to produce real results.');
-
-  // Load global CLAUDE.md as additional system context (shared across all groups)
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
-  let globalClaudeMd: string | undefined;
-  const globalContent = fs.existsSync(globalClaudeMdPath)
-    ? fs.readFileSync(globalClaudeMdPath, 'utf-8')
-    : '';
-  const agentMemoryBlock = containerInput.agentSystemPrompt
-    ? `\n\n[Agent memory]\n${containerInput.agentSystemPrompt.trim()}\n`
-    : '';
-  const enabledSkillsBlock = buildEnabledSkillsBlock(containerInput.runtimeConfig?.enabledSkills);
-  const workdirBlock = `\n\n[Current working directory]\n${currentWorkdir}\n`;
-  globalClaudeMd = bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + workdirBlock;
+  const globalClaudeMd = buildGlobalSystemPrompt(prompt, currentWorkdir, containerInput);
 
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
@@ -990,7 +1187,7 @@ function getOpenAICompatibleTools() {
       type: 'function',
       function: {
         name: 'send_image',
-        description: 'Send an image file from the container to the current chat.',
+        description: 'Send a file (image, PDF, or other document) from the container to the current chat. Use this for PNG, JPG, GIF, PDF, and any other file the user should receive.',
         parameters: {
           type: 'object',
           properties: {
@@ -1353,24 +1550,16 @@ async function runOpenAICompatibleConversation(
 ): Promise<{ newSessionId: string; closedDuringQuery: boolean; messages: OpenAIChatMessage[] }> {
   const newSessionId = sessionId || `openai-compatible:${randomUUID()}`;
   const persistedMessages = existingMessages || loadOpenAICompatibleSessionMessages(newSessionId);
+  const systemPrompt = buildGlobalSystemPrompt(prompt, cwd, containerInput);
   const messages: OpenAIChatMessage[] = persistedMessages
-    ? [...persistedMessages, { role: 'user', content: prompt }]
-    : (() => {
-        const bioSystemPrompt = getBioSystemPrompt();
-        const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
-        const globalContent = fs.existsSync(globalClaudeMdPath)
-          ? fs.readFileSync(globalClaudeMdPath, 'utf-8')
-          : '';
-        const agentMemoryBlock = containerInput.agentSystemPrompt
-          ? `\n\n[Agent memory]\n${containerInput.agentSystemPrompt.trim()}\n`
-          : '';
-        const enabledSkillsBlock = buildEnabledSkillsBlock(containerInput.runtimeConfig?.enabledSkills);
-        const workdirBlock = `\n\n[Current working directory]\n${cwd}\n`;
-        return [
-          { role: 'system', content: bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + workdirBlock },
-          { role: 'user', content: prompt },
-        ];
-      })();
+    ? [...persistedMessages]
+    : [];
+  if (messages.length > 0 && messages[0]?.role === 'system') {
+    messages[0] = { role: 'system', content: systemPrompt };
+  } else {
+    messages.unshift({ role: 'system', content: systemPrompt });
+  }
+  messages.push({ role: 'user', content: prompt });
   saveOpenAICompatibleSessionMessages(newSessionId, messages);
 
   let toolIterations = 0;
@@ -1451,6 +1640,428 @@ async function runOpenAICompatibleConversation(
   throw new Error(`OpenAI-compatible agent exceeded ${OPENAI_TOOL_MAX_ITERATIONS} tool iterations`);
 }
 
+async function runOpenAICodexConversation(
+  prompt: string,
+  sessionId: string | undefined,
+  containerInput: ContainerInput,
+  env: Record<string, string | undefined>,
+  cwd: string,
+  providerConfig: ProviderConfig,
+  mcpServerPath: string,
+): Promise<{ newSessionId: string; closedDuringQuery: boolean }> {
+  const cliPath = getOpenAICodexCliJsPath(env);
+  await ensureOpenAICodexHome(env);
+  await configureOpenAICodexMcpServer(cliPath, mcpServerPath, containerInput, cwd, env);
+
+  const outputPath = path.join(OPENAI_CODEX_OUTPUT_DIR, `${randomUUID()}.txt`);
+  const codexEnv = {
+    ...process.env,
+    ...env,
+    CODEX_HOME: OPENAI_CODEX_HOME,
+    HOME: '/home/node',
+  };
+  const safeEnv = Object.fromEntries(
+    Object.entries(codexEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+
+  const args = sessionId
+    ? [
+        cliPath,
+        'exec',
+        'resume',
+        '--json',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '-m',
+        providerConfig.model || 'gpt-5.4',
+        '-o',
+        outputPath,
+        sessionId,
+        prompt,
+      ]
+    : [
+        cliPath,
+        'exec',
+        '--json',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '-m',
+        providerConfig.model || 'gpt-5.4',
+        '-C',
+        cwd,
+        '-o',
+        outputPath,
+        prompt,
+      ];
+
+  const child = spawnChildProcess('node', args, {
+    cwd,
+    env: safeEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  scheduleOpenAICodexAuthCleanup(child);
+
+  let stderr = '';
+  let newSessionId = sessionId;
+  let lastAgentMessage = '';
+  const pendingSendMessageCalls = new Map<string, string>();
+  const completedSendMessageTexts = new Set<string>();
+
+  const stdoutLines = createInterface({ input: child.stdout! });
+  stdoutLines.on('line', (line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) {
+      return;
+    }
+
+    try {
+      const event = JSON.parse(trimmed) as {
+        type?: string;
+        thread_id?: string;
+        item?: {
+          id?: string;
+          type?: string;
+          text?: string;
+          tool?: string;
+          summary?: string[];
+          content?: string[];
+          status?: string;
+          error?: { message?: string } | null;
+          arguments?: { text?: unknown } | null;
+        };
+      };
+
+      if (event.type === 'thread.started' && typeof event.thread_id === 'string' && event.thread_id) {
+        newSessionId = event.thread_id;
+        return;
+      }
+
+      const item = event.item;
+      if (!item) return;
+
+      if (item.type === 'agent_message' && typeof item.text === 'string' && item.text.trim()) {
+        lastAgentMessage = item.text;
+        return;
+      }
+
+      if (item.type === 'mcp_tool_call' && item.tool) {
+        const toolText =
+          item.arguments && typeof item.arguments.text === 'string'
+            ? normalizeCodexMessageText(item.arguments.text)
+            : '';
+
+        if (event.type === 'item.started' && item.id && toolText) {
+          pendingSendMessageCalls.set(item.id, toolText);
+        }
+
+        if (item.tool === 'send_message' && event.type === 'item.completed') {
+          const completedText = toolText || (item.id ? pendingSendMessageCalls.get(item.id) || '' : '');
+          if (completedText && item.status !== 'failed' && !item.error) {
+            completedSendMessageTexts.add(completedText);
+          }
+        }
+
+        if (event.type === 'item.completed' && item.id) {
+          pendingSendMessageCalls.delete(item.id);
+        }
+      }
+
+      if (item.type === 'reasoning') {
+        const thinkingText = [...(item.summary || []), ...(item.content || [])].join('\n').trim();
+        if (thinkingText) {
+          writeIpcFile(IPC_MESSAGES_DIR, {
+            type: 'agent_step',
+            stepType: 'thinking',
+            text: thinkingText.slice(0, 2000),
+            groupFolder: containerInput.groupFolder,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return;
+      }
+
+      if (item.type === 'dynamic_tool_call' && item.tool) {
+        writeIpcFile(IPC_MESSAGES_DIR, {
+          type: 'agent_step',
+          stepType: 'tool_use',
+          toolName: item.tool,
+          groupFolder: containerInput.groupFolder,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch {
+      // Ignore non-protocol stdout lines.
+    }
+  });
+
+  child.stderr?.on('data', (chunk) => {
+    const text = chunk.toString('utf8');
+    stderr += text;
+    const trimmed = text.trim();
+    if (trimmed) {
+      log(`[codex] ${trimmed}`);
+    }
+  });
+
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code) => resolve(code ?? 1));
+  });
+  stdoutLines.close();
+
+  let finalMessage = '';
+  try {
+    finalMessage = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8').trim() : '';
+  } finally {
+    try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
+  }
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `Codex CLI exited with code ${exitCode}.\n${truncateOutput(stderr || finalMessage || 'Unknown Codex error.')}`,
+    );
+  }
+
+  const rawResultText = finalMessage || lastAgentMessage || null;
+  const normalizedResultText = rawResultText ? normalizeCodexMessageText(rawResultText) : '';
+  const resultText =
+    normalizedResultText && completedSendMessageTexts.has(normalizedResultText)
+      ? null
+      : rawResultText;
+  if (!newSessionId) {
+    throw new Error('Codex CLI completed without returning a thread id.');
+  }
+
+  writeOutput({
+    status: 'success',
+    result: resultText,
+    newSessionId,
+  });
+
+  return { newSessionId, closedDuringQuery: false };
+}
+
+// ── Gemini CLI provider ──────────────────────────────────────────────────
+//
+// Mirrors the Codex runner. Auth precedence:
+//   1. OAuth creds at ~/.gemini/oauth_creds.json (passed via
+//      GEMINI_OAUTH_CREDS_JSON env; written to GEMINI_HOME before exec)
+//   2. GEMINI_API_KEY (Google AI Studio direct)
+//
+// The CLI binary is mounted read-only from the host. We register BioClaw's
+// IPC MCP server with `gemini mcp add bioclaw ...` before each exec so the
+// agent can call our tools the same way the Codex path does.
+
+function getGeminiCliJsPath(env: Record<string, string | undefined>): string {
+  const cliPath = (env.GEMINI_CLI_JS || DEFAULT_GEMINI_CLI_JS).trim();
+  if (!cliPath) {
+    throw new Error('Gemini CLI path is empty');
+  }
+  if (!fs.existsSync(cliPath)) {
+    throw new Error(`Gemini CLI entrypoint not found: ${cliPath}`);
+  }
+  return cliPath;
+}
+
+function normalizeGeminiMessageText(text: string): string {
+  return text.replace(/\r\n/g, '\n').trim();
+}
+
+async function ensureGeminiHome(
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  fs.mkdirSync(GEMINI_HOME, { recursive: true });
+  fs.mkdirSync(GEMINI_OUTPUT_DIR, { recursive: true });
+  const oauthJson = env.GEMINI_OAUTH_CREDS_JSON?.trim();
+  if (oauthJson) {
+    fs.writeFileSync(GEMINI_OAUTH_PATH, oauthJson, { encoding: 'utf8', mode: 0o600 });
+  } else if (!env.GEMINI_API_KEY) {
+    throw new Error('Gemini auth missing: neither GEMINI_OAUTH_CREDS_JSON nor GEMINI_API_KEY set');
+  }
+}
+
+function scheduleGeminiAuthCleanup(child: ReturnType<typeof spawnChildProcess>): void {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    try { fs.unlinkSync(GEMINI_OAUTH_PATH); } catch { /* best effort */ }
+  };
+  const timer = setTimeout(cleanup, 2000);
+  timer.unref?.();
+  child.once('exit', cleanup);
+  child.stdout?.once('data', cleanup);
+  child.stderr?.once('data', cleanup);
+}
+
+async function configureGeminiMcpServer(
+  cliPath: string,
+  mcpServerPath: string,
+  containerInput: ContainerInput,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  const geminiEnv = {
+    ...process.env,
+    ...env,
+    GEMINI_HOME,
+    HOME: '/home/node',
+  };
+  const safeEnv = Object.fromEntries(
+    Object.entries(geminiEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+
+  try {
+    await execFileAsync('node', [cliPath, 'mcp', 'remove', 'bioclaw'], {
+      cwd,
+      env: safeEnv,
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch {
+    // Missing-server errors are ignored; we re-add the MCP config next.
+  }
+
+  const args = [
+    cliPath,
+    'mcp',
+    'add',
+    'bioclaw',
+    '--env',
+    `BIOCLAW_CHAT_JID=${containerInput.chatJid}`,
+    '--env',
+    `BIOCLAW_GROUP_FOLDER=${containerInput.groupFolder}`,
+    '--env',
+    `BIOCLAW_AGENT_ID=${containerInput.agentId || containerInput.groupFolder}`,
+    '--env',
+    `BIOCLAW_IS_MAIN=${containerInput.isMain ? '1' : '0'}`,
+    '--',
+    'node',
+    mcpServerPath,
+  ];
+
+  await execFileAsync('node', args, {
+    cwd,
+    env: safeEnv,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
+async function runGeminiConversation(
+  prompt: string,
+  sessionId: string | undefined,
+  containerInput: ContainerInput,
+  env: Record<string, string | undefined>,
+  cwd: string,
+  providerConfig: ProviderConfig,
+  mcpServerPath: string,
+): Promise<{ newSessionId: string; closedDuringQuery: boolean }> {
+  const cliPath = getGeminiCliJsPath(env);
+  await ensureGeminiHome(env);
+  await configureGeminiMcpServer(cliPath, mcpServerPath, containerInput, cwd, env);
+
+  const outputPath = path.join(GEMINI_OUTPUT_DIR, `${randomUUID()}.txt`);
+  const geminiEnv = {
+    ...process.env,
+    ...env,
+    GEMINI_HOME,
+    HOME: '/home/node',
+  };
+  const safeEnv = Object.fromEntries(
+    Object.entries(geminiEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+
+  // Gemini CLI flags mirror the Codex `exec` contract as closely as possible.
+  // `--yolo` bypasses approval prompts (analogous to Codex's
+  // --dangerously-bypass-approvals-and-sandbox); `--model` selects the model;
+  // `--include-directories` seeds the cwd. Session resume uses `--resume`
+  // when the CLI version supports it; otherwise each query is fresh.
+  const baseArgs = [
+    cliPath,
+    '--yolo',
+    '--model',
+    providerConfig.model || 'gemini-2.0-pro',
+    '--include-directories',
+    cwd,
+    '--output',
+    outputPath,
+    '--prompt',
+    prompt,
+  ];
+  const args = sessionId
+    ? [...baseArgs.slice(0, 1), '--resume', sessionId, ...baseArgs.slice(1)]
+    : baseArgs;
+
+  const child = spawnChildProcess('node', args, {
+    cwd,
+    env: safeEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  scheduleGeminiAuthCleanup(child);
+
+  let stderr = '';
+  let lastAgentMessage = '';
+  let newSessionId = sessionId;
+
+  const stdoutLines = createInterface({ input: child.stdout! });
+  stdoutLines.on('line', (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    // Gemini CLI emits stdout as free-form text by default; if a JSON event
+    // stream is enabled upstream in the future, we can parse it here.
+    // For now, accumulate the last non-empty line as a best-effort final
+    // message, and forward anything that looks like a session identifier.
+    if (/^session[:=]/i.test(trimmed)) {
+      const id = trimmed.split(/[:=]/, 2)[1]?.trim();
+      if (id) newSessionId = id;
+      return;
+    }
+    lastAgentMessage = trimmed;
+  });
+
+  child.stderr?.on('data', (chunk) => {
+    const text = chunk.toString('utf8');
+    stderr += text;
+    const t = text.trim();
+    if (t) log(`[gemini] ${t}`);
+  });
+
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code) => resolve(code ?? 1));
+  });
+  stdoutLines.close();
+
+  let finalMessage = '';
+  try {
+    finalMessage = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8').trim() : '';
+  } finally {
+    try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
+  }
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `Gemini CLI exited with code ${exitCode}.\n${truncateOutput(stderr || finalMessage || 'Unknown Gemini error.')}`,
+    );
+  }
+
+  const rawResultText = finalMessage || lastAgentMessage || null;
+  const resultText = rawResultText ? normalizeGeminiMessageText(rawResultText) : null;
+  // Gemini CLI does not yet emit persistent thread IDs reliably; synthesize
+  // one if the runner didn't pick a session marker out of stdout so the
+  // host side has a stable handle for this conversation.
+  const effectiveSessionId = newSessionId || sessionId || randomUUID();
+
+  writeOutput({
+    status: 'success',
+    result: resultText,
+    newSessionId: effectiveSessionId,
+  });
+
+  return { newSessionId: effectiveSessionId, closedDuringQuery: false };
+}
+
 async function main(): Promise<void> {
   let containerInput: ContainerInput;
 
@@ -1520,7 +2131,7 @@ async function main(): Promise<void> {
           log('Close sentinel consumed during query, exiting');
           break;
         }
-      } else {
+      } else if (providerConfig.provider === 'openai-compatible') {
         const queryResult = await runOpenAICompatibleConversation(
           prompt,
           sessionId,
@@ -1533,6 +2144,42 @@ async function main(): Promise<void> {
         sessionId = queryResult.newSessionId;
         resumeAt = undefined;
         openAiMessages = queryResult.messages;
+
+        if (queryResult.closedDuringQuery) {
+          log('Close sentinel consumed during query, exiting');
+          break;
+        }
+      } else if (providerConfig.provider === 'gemini') {
+        const queryResult = await runGeminiConversation(
+          prompt,
+          sessionId,
+          containerInput,
+          sdkEnv,
+          currentWorkdir,
+          providerConfig,
+          mcpServerPath,
+        );
+        sessionId = queryResult.newSessionId;
+        resumeAt = undefined;
+        openAiMessages = undefined;
+
+        if (queryResult.closedDuringQuery) {
+          log('Close sentinel consumed during query, exiting');
+          break;
+        }
+      } else {
+        const queryResult = await runOpenAICodexConversation(
+          prompt,
+          sessionId,
+          containerInput,
+          sdkEnv,
+          currentWorkdir,
+          providerConfig,
+          mcpServerPath,
+        );
+        sessionId = queryResult.newSessionId;
+        resumeAt = undefined;
+        openAiMessages = undefined;
 
         if (queryResult.closedDuringQuery) {
           log('Close sentinel consumed during query, exiting');

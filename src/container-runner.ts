@@ -22,6 +22,18 @@ import {
   stopContainer,
   makeContainerName,
 } from './container-runtime.js';
+import {
+  HOST_CODEX_CLI_JS_CONTAINER_PATH,
+  hasHostCodexCli,
+  readHostCodexAuthJson,
+} from './codex-cli.js';
+import {
+  HOST_GEMINI_CLI_JS_CONTAINER_PATH,
+  hasHostGeminiCli,
+  readHostGeminiOAuthJson,
+  resolveHostGeminiCliNodeModulesRoot,
+} from './gemini-cli.js';
+import { resolveHostCodexCliNodeModulesRoot } from './codex-cli.js';
 import { logger } from './logger.js';
 import { AgentRuntimeConfig, RegisteredGroup } from './types.js';
 import { getWorkspaceFolder } from './workspace.js';
@@ -214,18 +226,45 @@ export async function runContainerAgent(
     const effectiveSecrets = {
       ...readSecrets(),
     };
+    const hostCodexAuth = readHostCodexAuthJson();
+    if (hostCodexAuth) {
+      effectiveSecrets.OPENAI_CODEX_AUTH_JSON = hostCodexAuth;
+    }
+    if (hasHostCodexCli()) {
+      effectiveSecrets.OPENAI_CODEX_CLI_JS = HOST_CODEX_CLI_JS_CONTAINER_PATH;
+    }
+    const hostGeminiOAuth = readHostGeminiOAuthJson();
+    if (hostGeminiOAuth) {
+      effectiveSecrets.GEMINI_OAUTH_CREDS_JSON = hostGeminiOAuth;
+    }
+    if (hasHostGeminiCli()) {
+      const geminiRoot = resolveHostGeminiCliNodeModulesRoot();
+      const codexRoot = resolveHostCodexCliNodeModulesRoot();
+      // If Gemini and Codex CLIs come from the same node_modules root, the
+      // container already has a mount at /opt/host-node-modules; reuse it.
+      // Otherwise we publish a separate /opt/host-node-modules-gemini mount.
+      const shareCodexMount = geminiRoot && codexRoot && geminiRoot === codexRoot;
+      effectiveSecrets.GEMINI_CLI_JS = shareCodexMount
+        ? '/opt/host-node-modules/@google/gemini-cli/dist/index.js'
+        : HOST_GEMINI_CLI_JS_CONTAINER_PATH;
+    }
     if (input.runtimeConfig?.provider) {
       effectiveSecrets.MODEL_PROVIDER = input.runtimeConfig.provider;
     }
+    const effectiveProvider = input.runtimeConfig?.provider || effectiveSecrets.MODEL_PROVIDER;
     if (input.runtimeConfig?.model) {
-      if (input.runtimeConfig.provider === 'openai-compatible') {
+      if (effectiveProvider === 'openai-compatible') {
         effectiveSecrets.OPENAI_COMPATIBLE_MODEL = input.runtimeConfig.model;
+      } else if (effectiveProvider === 'openai-codex') {
+        effectiveSecrets.OPENAI_CODEX_MODEL = input.runtimeConfig.model;
+      } else if (effectiveProvider === 'gemini') {
+        effectiveSecrets.GEMINI_MODEL = input.runtimeConfig.model;
       } else {
         effectiveSecrets.OPENROUTER_MODEL = input.runtimeConfig.model;
       }
     }
     if (input.runtimeConfig?.baseUrl) {
-      if (input.runtimeConfig.provider === 'openai-compatible') {
+      if (effectiveProvider === 'openai-compatible') {
         effectiveSecrets.OPENAI_COMPATIBLE_BASE_URL = input.runtimeConfig.baseUrl;
       } else {
         effectiveSecrets.OPENROUTER_BASE_URL = input.runtimeConfig.baseUrl;

@@ -70,6 +70,7 @@
 - [概览](#概览)
 - [这版新增了什么](#这版新增了什么)
 - [快速开始](#快速开始)
+- [新手详细指南](#新手详细指南)
 - [消息通道](#消息通道)
 - [示例演示](#示例演示)
 - [系统架构](#系统架构)
@@ -92,6 +93,8 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 
 默认通道为 WhatsApp；飞书、企业微信、Discord、Slack、微信（已全面支持）、本地网页等配置见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**。飞书的完整配置、OpenRouter 设置、群聊限制与排障见 **[docs/FEISHU_SETUP.zh-CN.md](docs/FEISHU_SETUP.zh-CN.md)**。QQ 相关截图仍为路线图示意，详见该文档。
 
+关于本地新增的 SEC 报告工作流、自动任务路由、Typst 报告模板、输出物与测试说明，见 **[docs/SEC_REPORT_WORKFLOW.zh-CN.md](docs/SEC_REPORT_WORKFLOW.zh-CN.md)**。
+
 ## 这版新增了什么
 
 最近这版更新，BioClaw 用起来更像一个真正可管理的研究工作台了：
@@ -106,6 +109,17 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 - **OpenRouter 可以先做健康检查**：新增 `npm run check:openrouter`，会用当前 `.env` 发一个最小请求，先确认 key 能不能真正调模型。
 
 ## 快速开始
+
+如果你对 Docker、`.env`、workspace、allowlist、挂载这些概念还不熟，建议先看这份分步骤文档：
+
+- **[docs/BEGINNER_GUIDE.zh-CN.md](docs/BEGINNER_GUIDE.zh-CN.md)**  
+  面向刚入门用户，包含 API/provider 切换、workspace 是什么、什么时候需要 allowlist、如何配置额外挂载、如何验证是否生效。
+
+## 新手详细指南
+
+零基础上手建议直接从这里开始：
+
+- **[docs/BEGINNER_GUIDE.zh-CN.md](docs/BEGINNER_GUIDE.zh-CN.md)**
 
 ### 环境要求
 
@@ -173,6 +187,20 @@ OPENAI_COMPATIBLE_API_KEY=your_api_key
 OPENAI_COMPATIBLE_BASE_URL=https://your-provider.example/v1
 OPENAI_COMPATIBLE_MODEL=your-model-name
 ```
+
+**方案 C：复用本机 Codex CLI 登录态**
+
+```bash
+MODEL_PROVIDER=openai-codex
+OPENAI_CODEX_MODEL=gpt-5.4
+```
+
+要求：
+
+- 宿主机已经安装 `codex`
+- 已执行过 `codex login`，并且 `~/.codex/auth.json` 有效
+
+BioClaw 会复用宿主机的 Codex 登录态，并把 Codex 线程状态保存在当前工作区会话目录里，这样多轮 GPT 对话可以续接。
 
 修改 `.env` 后，重启 BioClaw：
 
@@ -387,6 +415,7 @@ BioClaw/
 ├── docs/
 │   ├── CHANNELS.md        # 消息通道（英文）
 │   ├── CHANNELS.zh-CN.md  # 消息通道（中文）
+│   ├── SEC_REPORT_WORKFLOW.zh-CN.md  # SEC 报告工作流说明
 │   ├── WINDOWS.zh-CN.md   # Windows / 本地网页
 │   └── images/            # 文档配图
 ├── ExampleTask/           # Demo 任务与截图

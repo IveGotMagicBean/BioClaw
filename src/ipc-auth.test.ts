@@ -60,6 +60,7 @@ beforeEach(() => {
 
   deps = {
     sendMessage: async () => {},
+    sendToChannel: async () => {},
     sendImage: async () => {},
     registeredGroups: () => groups,
     getAgentIdForChat: (chatJid) => groups[chatJid]?.workspaceFolder || groups[chatJid]?.folder,

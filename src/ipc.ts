@@ -19,6 +19,11 @@ import { getWorkspaceFolder } from './workspace.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendToChannel: (
+    jid: string,
+    text: string,
+    sourceWorkspaceFolder?: string,
+  ) => Promise<void>;
   sendImage: (jid: string, imagePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
@@ -147,6 +152,30 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'Unauthorized IPC image attempt blocked',
                   );
                 }
+              } else if (data.type === 'plan') {
+                // Plan mode: agent sends a structured plan for user review.
+                // For now, render it as a regular message with plan formatting.
+                // Future: dedicated UI component with approve/modify/reject.
+                const planChatJid = data.chatJid;
+                if (planChatJid) {
+                  const planText = data.text || data.plan || '[Plan received]';
+                  const targetAgentId = deps.getAgentIdForChat(planChatJid);
+                  if (targetAgentId) {
+                    await deps.sendToChannel(
+                      planChatJid,
+                      planText,
+                      sourceWorkspaceFolder,
+                    );
+                  }
+                }
+                // Also record as a trace event
+                recordAgentTraceEvent({
+                  group_folder: sourceWorkspaceFolder,
+                  chat_jid: data.chatJid ?? null,
+                  session_id: null,
+                  type: 'agent_plan',
+                  payload: { plan: data.plan ?? data.text ?? null },
+                });
               } else if (data.type === 'agent_step') {
                 const tracePayload: Record<string, unknown> = {
                   stepType: data.stepType,
