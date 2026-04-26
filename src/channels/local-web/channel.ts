@@ -282,6 +282,11 @@ export class LocalWebChannel implements Channel {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/v2') {
+      this.serveStaticAsset('/assets/v2/index.html', res);
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/config') {
       const streamQs = DASHBOARD_TOKEN ? `?token=${encodeURIComponent(DASHBOARD_TOKEN)}` : '';
       sendJson(res, 200, {

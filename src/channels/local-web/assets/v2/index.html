@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BioClaw</title>
+  <link rel="icon" type="image/jpeg" href="/favicon.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;650;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/v2/style.css">
+</head>
+<body>
+  <div class="unified-root" id="unifiedRoot">
+
+    <header class="unified-header">
+      <div class="header-left">
+        <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle thread list" title="Threads">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+        <span class="logo">
+          <img class="logo-img" src="/favicon.jpg" alt="BioClaw" />
+          BioClaw
+        </span>
+      </div>
+      <div class="header-actions">
+        <div class="pill" id="connPill" title=""><span class="dot" id="connDot"></span><span id="connLabel"></span></div>
+        <button type="button" class="trace-open-btn" id="openTraceBtn" aria-label="Lab trace" title="Lab trace">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="15" height="15">
+            <path d="M8 2v7.527a3 3 0 0 1-.46 1.597L3.42 17.596A2 2 0 0 0 5.1 20.69h13.8a2 2 0 0 0 1.68-3.095l-4.12-6.47A3 3 0 0 1 16 9.527V2"/>
+            <line x1="7" y1="2" x2="17" y2="2"/>
+            <line x1="7" y1="14" x2="17" y2="14"/>
+          </svg>
+          <span id="openTraceBtnLabel">Lab Trace</span>
+          <span class="trace-btn-dot" id="traceConnDot" aria-hidden="true"></span>
+        </button>
+        <span id="traceConnLabel" class="visually-hidden"></span>
+        <button type="button" class="icon-btn" id="openSettings" aria-label="">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="unified-body" id="unifiedBody">
+
+      <!-- COL 1: Thread rail -->
+      <aside class="thread-rail" id="threadRail" aria-label="Threads">
+        <div class="thread-rail-head">
+          <div class="thread-rail-head-text">
+            <div class="thread-rail-label" id="threadsTitle"></div>
+            <div class="thread-rail-sub" id="threadsHint"></div>
+          </div>
+          <div class="thread-rail-head-actions">
+            <button type="button" class="primary subtle" id="newThreadBtn"></button>
+          </div>
+        </div>
+        <div id="threadList" class="thread-list" aria-live="polite"></div>
+      </aside>
+
+      <!-- COL 2: Chat main (always visible) -->
+      <section id="panelChat" class="panel panel-chat" role="main">
+        <div class="chat-main">
+          <div class="chat-hero" id="chatHero">
+            <h1 id="chatTitle"></h1>
+            <p class="subtitle" id="chatHint"></p>
+          </div>
+          <div id="messages" class="chat-scroll" aria-live="polite"></div>
+          <div class="work-strip" id="workStrip" role="status" aria-live="polite">
+            <span class="work-strip-spinner" aria-hidden="true"></span>
+            <span class="work-strip-label" id="workStripLabel"></span>
+            <span class="work-strip-detail" id="workStripDetail"></span>
+            <span class="work-strip-time" id="workStripTime"></span>
+          </div>
+          <div class="composer-wrap">
+            <div class="composer-card">
+              <form id="composer">
+                <div class="composer-input-shell">
+                  <textarea id="text" rows="2"></textarea>
+                </div>
+                <div class="row">
+                  <div class="hint" id="uploadHint"></div>
+                  <div class="toolbar">
+                    <label class="upload">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                      <span id="uploadLabel"></span>
+                      <input id="file" type="file">
+                    </label>
+                    <span id="filename" class="filename"></span>
+                    <button class="primary" id="send" type="submit"></button>
+                  </div>
+                </div>
+                <div id="status" class="status"></div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- COL 3: Trace panel (hidden by default, inline column when open) -->
+      <aside class="trace-panel" id="panelTrace" aria-label="Lab trace">
+        <div class="trace-head">
+          <h2 id="traceDrawerTitle"></h2>
+          <button type="button" class="icon-btn" id="closeTrace" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="trace-main">
+          <div class="trace-toolbar">
+            <p class="trace-desc" id="traceSub"></p>
+            <div class="trace-actions">
+              <label class="fld"><span id="i18n-group-label"></span> <select id="group"><option value="" id="opt-all"></option></select></label>
+              <label class="trace-opt" for="traceShowStream"><input type="checkbox" id="traceShowStream" /><span id="traceStreamLabel"></span></label>
+              <button type="button" class="btn-trace" id="reloadTrace"></button>
+            </div>
+          </div>
+          <div id="timeline" class="timeline"></div>
+          <aside class="trace-sidebar">
+            <strong class="sidebar-title" id="i18n-sidebar-title"></strong>
+            <p class="sidebar-hint" id="i18n-sidebar-hint"></p>
+            <div id="tree" class="tree"></div>
+          </aside>
+        </div>
+        <div class="trace-conn-pill" id="traceConnPill" title=""><span id="traceConnLabelInner"></span></div>
+      </aside>
+
+    </div>
+  </div>
+
+  <!-- Thread rail backdrop (only used on narrow screens when rail acts as overlay) -->
+  <div class="rail-backdrop" id="railBackdrop" aria-hidden="true"></div>
+
+  <!-- Settings drawer -->
+  <div class="drawer-backdrop" id="settingsBackdrop" aria-hidden="true"></div>
+  <aside class="drawer" id="settingsDrawer" aria-hidden="true" aria-labelledby="settingsHeading">
+    <div class="drawer-head">
+      <h2 id="settingsHeading"></h2>
+      <button type="button" class="icon-btn" id="closeSettings" aria-label="">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body">
+      <div class="drawer-section">
+        <h3 id="secDisplay"></h3>
+        <div class="setting-row">
+          <span class="setting-label" id="lblLang"></span>
+          <button type="button" class="btn-setting" id="langBtn"></button>
+        </div>
+        <div class="setting-stack">
+          <span class="setting-label" id="lblTheme"></span>
+          <div class="theme-grid" id="themeGrid">
+            <button type="button" class="theme-swatch" data-theme="default" data-mode="light">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Emerald</span>
+            </button>
+            <button type="button" class="theme-swatch" data-theme="ocean" data-mode="light">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Ocean</span>
+            </button>
+            <button type="button" class="theme-swatch" data-theme="sakura" data-mode="light">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Sakura</span>
+            </button>
+            <button type="button" class="theme-swatch" data-theme="cream" data-mode="light">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Cream</span>
+            </button>
+            <button type="button" class="theme-swatch" data-theme="mono-light" data-mode="light">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Mono</span>
+            </button>
+            <button type="button" class="theme-swatch" data-theme="midnight" data-mode="dark">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Midnight</span>
+            </button>
+            <button type="button" class="theme-swatch" data-theme="slate" data-mode="dark">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Slate</span>
+            </button>
+            <button type="button" class="theme-swatch" data-theme="forest" data-mode="dark">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Forest</span>
+            </button>
+            <button type="button" class="theme-swatch" data-theme="wine" data-mode="dark">
+              <span class="theme-swatch-preview"></span>
+              <span class="theme-swatch-label">Wine</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <h3 id="secConnection"></h3>
+        <div class="setting-row"><span class="setting-label" id="lblConn"></span><span class="setting-value" id="settingsConnValue"></span></div>
+        <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <span class="setting-label" id="lblTraceConn"></span>
+          <span class="setting-value" id="settingsTraceConnValue"></span>
+        </div>
+        <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <span class="setting-label" id="lblSession"></span>
+          <code class="jid-box" id="sessionJid"></code>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <div class="drawer-section-head">
+          <h3 id="secControl"></h3>
+          <button type="button" class="btn-setting btn-inline" id="manageRefreshBtn"></button>
+        </div>
+        <div class="setting-stack">
+          <label class="setting-label" for="manageCommandInput" id="lblControlCommand"></label>
+          <div class="setting-inline">
+            <input type="text" id="manageCommandInput" class="manage-input" autocomplete="off">
+            <button type="button" class="btn-setting btn-inline" id="manageCommandBtn"></button>
+          </div>
+          <pre class="manage-block" id="manageCommandOutput"></pre>
+        </div>
+        <div class="setting-stack">
+          <label class="setting-label" id="lblStatusPanel"></label>
+          <pre class="manage-block" id="manageStatusPanel"></pre>
+        </div>
+        <div class="setting-stack">
+          <label class="setting-label" id="lblDoctorPanel"></label>
+          <pre class="manage-block" id="manageDoctorPanel"></pre>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <script src="/vendor/marked.umd.js"></script>
+  <script src="/vendor/purify.min.js"></script>
+  <script src="/assets/v2/app.js"></script>
+</body>
+</html>

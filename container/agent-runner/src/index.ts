@@ -42,7 +42,7 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'streaming';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -1212,40 +1212,134 @@ async function executeOpenAIToolCall(
 async function callOpenAICompatibleApi(
   providerConfig: ProviderConfig,
   messages: OpenAIChatMessage[],
-) {
+  onChunk?: (partialText: string) => void,
+): Promise<any> {
   if (!providerConfig.apiKey || !providerConfig.baseUrl || !providerConfig.model) {
     throw new Error('OpenAI-compatible provider is missing apiKey, baseUrl, or model');
   }
 
   const baseUrl = providerConfig.baseUrl.replace(/\/+$/, '');
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${providerConfig.apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://github.com/Runchuan-BU/BioClaw',
-      'X-Title': 'BioClaw',
-    },
-    body: JSON.stringify({
-      model: providerConfig.model,
-      messages,
-      tools: getOpenAICompatibleTools(),
-      tool_choice: 'auto',
-      temperature: 0.2,
-    }),
-  });
+  const useStream = !!onChunk;
 
-  const data = await response.json() as OpenAIChatResponse;
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${providerConfig.apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://github.com/Runchuan-BU/BioClaw',
+        'X-Title': 'BioClaw',
+      },
+      body: JSON.stringify({
+        model: providerConfig.model,
+        messages,
+        tools: getOpenAICompatibleTools(),
+        tool_choice: 'auto',
+        temperature: 0.2,
+        stream: useStream,
+      }),
+    });
+  } catch (fetchErr) {
+    if (useStream) {
+      log(`Streaming fetch failed (${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}); retrying without stream`);
+      // Recursive call with onChunk=undefined → non-streaming mode
+      return callOpenAICompatibleApi(providerConfig, messages);
+    }
+    throw fetchErr;
+  }
+
   if (!response.ok) {
-    throw new Error(data.error?.message || `Provider request failed with status ${response.status}`);
+    // Error responses aren't SSE, parse as JSON
+    const errData = await response.json().catch(() => ({})) as OpenAIChatResponse;
+    throw new Error(errData.error?.message || `Provider request failed with status ${response.status}`);
   }
 
-  const message = data.choices?.[0]?.message;
-  if (!message) {
-    throw new Error('Provider returned no message choices');
+  if (!useStream) {
+    const data = await response.json() as OpenAIChatResponse;
+    const message = data.choices?.[0]?.message;
+    if (!message) throw new Error('Provider returned no message choices');
+    return message;
   }
 
-  return message;
+  // Streaming SSE parse
+  if (!response.body) throw new Error('Streaming response has no body');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let accumulatedText = '';
+  const aggregatedToolCalls: Record<number, { id?: string; type?: string; function: { name?: string; arguments?: string } }> = {};
+  let lastEmitAt = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Split on \n\n (SSE event boundary)
+      let sepIdx;
+      while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
+        const rawEvent = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+        for (const line of rawEvent.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          let evt: { choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; type?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string | null }> };
+          try { evt = JSON.parse(payload); } catch { continue; }
+          const delta = evt.choices?.[0]?.delta;
+          if (!delta) continue;
+          if (typeof delta.content === 'string' && delta.content.length) {
+            accumulatedText += delta.content;
+            const now = Date.now();
+            if (onChunk && (now - lastEmitAt >= 60)) {
+              lastEmitAt = now;
+              try { onChunk(accumulatedText); } catch { /* ignore */ }
+            }
+          }
+          if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              const slot = aggregatedToolCalls[idx] ?? { function: { name: '', arguments: '' } };
+              if (tc.id) slot.id = tc.id;
+              if (tc.type) slot.type = tc.type;
+              if (tc.function?.name) slot.function.name = (slot.function.name || '') + tc.function.name;
+              if (tc.function?.arguments) slot.function.arguments = (slot.function.arguments || '') + tc.function.arguments;
+              aggregatedToolCalls[idx] = slot;
+            }
+          }
+        }
+      }
+    }
+  } catch (streamErr) {
+    log(`Stream interrupted (${streamErr instanceof Error ? streamErr.message : String(streamErr)}); falling back to non-streaming retry`);
+    return callOpenAICompatibleApi(providerConfig, messages);
+  }
+
+  // Final flush
+  if (onChunk && accumulatedText) {
+    try { onChunk(accumulatedText); } catch { /* ignore */ }
+  }
+
+  const toolCalls = Object.keys(aggregatedToolCalls)
+    .sort((a, b) => Number(a) - Number(b))
+    .map(k => aggregatedToolCalls[Number(k)])
+    .filter(tc => tc.function.name)
+    .map(tc => ({
+      id: tc.id || '',
+      type: 'function' as const,
+      function: {
+        name: tc.function.name || '',
+        arguments: tc.function.arguments || '',
+      },
+    }));
+
+  return {
+    role: 'assistant' as const,
+    content: accumulatedText || null,
+    tool_calls: toolCalls.length ? toolCalls : undefined,
+  };
 }
 
 async function runOpenAICompatibleConversation(
@@ -1282,7 +1376,19 @@ async function runOpenAICompatibleConversation(
   let toolIterations = 0;
   while (toolIterations < OPENAI_TOOL_MAX_ITERATIONS) {
     toolIterations += 1;
-    const assistantMessage = await callOpenAICompatibleApi(providerConfig, messages);
+    // Pipe every streamed chunk back as a writeOutput so the orchestrator
+    // records a stream_output trace event and the UI sees progressive text.
+    const assistantMessage = await callOpenAICompatibleApi(
+      providerConfig,
+      messages,
+      (partial) => {
+        writeOutput({
+          status: 'streaming',
+          result: partial,
+          newSessionId,
+        });
+      },
+    );
 
     messages.push({
       role: 'assistant',
