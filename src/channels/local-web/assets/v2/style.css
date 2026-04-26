@@ -414,13 +414,44 @@ body.trace-open .trace-open-btn {
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--trace-w);
-  transition: grid-template-columns .25s cubic-bezier(0.4, 0, 0.2, 1);
+  grid-template-columns: var(--rail-w) auto minmax(0, 1fr) auto var(--trace-w);
 }
+/* Disable transition while user is dragging to keep cursor in sync */
+.unified-body:not(.is-resizing) { transition: grid-template-columns .2s cubic-bezier(0.4, 0, 0.2, 1); }
 
 /* Column toggles via body classes */
 body.rail-collapsed { --rail-w: 0px; }
-body.trace-open     { --trace-w: min(420px, 38vw); }
+body.trace-open     { --trace-w: var(--trace-w-user, min(560px, 45vw)); }
+body:not(.trace-open) #resizerTrace { display: none; }
+body.rail-collapsed #resizerRail { display: none; }
+
+/* Vertical column resizers */
+.col-resizer {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 5;
+  user-select: none;
+  touch-action: none;
+}
+.col-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 2px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity .15s;
+  border-radius: 2px;
+}
+.col-resizer:hover::before,
+.unified-body.is-resizing .col-resizer::before { opacity: 1; background: var(--accent); }
+.unified-body.is-resizing { cursor: col-resize; user-select: none; }
+.unified-body.is-resizing * { user-select: none; pointer-events: none; }
+.unified-body.is-resizing .col-resizer { pointer-events: auto; }
+@media (max-width: 900px) {
+  .col-resizer { display: none; }
+}
 
 .unified-layout { display: contents; }  /* legacy wrapper, collapsed */
 
@@ -432,7 +463,10 @@ body.trace-open     { --trace-w: min(420px, 38vw); }
   position: relative;
 }
 .panel.hidden-narrow { display: none; }
-.panel-resizer, .composer-resizer { display: none !important; }
+.composer-resizer { display: none !important; }
+.panel-chat { grid-column: 3 / 4; min-width: 0; }
+#resizerRail { grid-column: 2 / 3; }
+#resizerTrace { grid-column: 4 / 5; }
 
 /* Chat lives in col 2 (always visible) */
 .chat-shell {
@@ -445,7 +479,7 @@ body.trace-open     { --trace-w: min(420px, 38vw); }
 /* Thread rail — col 1 (default visible, collapse to 0 via body.rail-collapsed) */
 .thread-rail {
   position: relative;
-  grid-column: 1;
+  grid-column: 1 / 2;
   width: 100%;
   height: 100%;
   background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
@@ -455,11 +489,12 @@ body.trace-open     { --trace-w: min(420px, 38vw); }
   overflow: hidden;
   min-width: 0;
 }
-/* Trace panel — col 3 (default hidden, opens via body.trace-open) */
+/* Trace panel — col 5 (default hidden, opens via body.trace-open) */
 .trace-panel {
-  grid-column: 3;
+  grid-column: 5 / 6;
   width: 100%;
   height: 100%;
+  min-width: 0;
   background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;
@@ -471,7 +506,7 @@ body.trace-open     { --trace-w: min(420px, 38vw); }
 /* Narrow viewports: stack single-panel, toggle rail + trace as overlay drawers */
 @media (max-width: 900px) {
   :root { --rail-w: 0px; --trace-w: 0px; }
-  .unified-body { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .unified-body { grid-template-columns: 0 0 minmax(0, 1fr) 0 0; }
 
   .thread-rail {
     position: fixed;
@@ -1322,6 +1357,180 @@ textarea::placeholder { color: var(--muted-soft); }
   padding: 8px 16px;
   font-size: 11px;
   color: var(--muted);
+}
+
+/* When previewing a file, hide the trace header to give max space */
+body.drawer-preview .trace-head { display: none; }
+body.drawer-preview .trace-conn-pill { display: none; }
+
+/* ──────── Files pane (drawer preview, opens when clicking files in chat) ──────── */
+.files-pane {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.files-pane[hidden] { display: none; }
+.files-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.files-pane-title { font-size: 13px; font-weight: 650; }
+.files-back-btn {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background .12s;
+}
+.files-back-btn:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* Hide the unused old tree-related classes (kept for backwards-compat with other code paths) */
+.files-tree, .files-tree-empty, .files-tree-loading { display: none; }
+
+/* "Preview file" buttons inside trace events */
+.pstep-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.pstep-file-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.pstep-file-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.files-tree-empty, .files-tree-loading {
+  color: var(--muted);
+  padding: 8px 4px;
+  font-size: 12px;
+}
+.files-tree details { margin: 2px 0; }
+.files-tree summary {
+  cursor: pointer;
+  padding: 3px 4px;
+  border-radius: 4px;
+  list-style: none;
+  user-select: none;
+}
+.files-tree summary::-webkit-details-marker { display: none; }
+.files-tree summary:hover { background: var(--surface-raised); }
+.files-tree .ft-children { padding-left: 14px; }
+.files-tree .ft-file {
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+.files-tree .ft-file:hover { background: var(--surface-raised); }
+.files-tree .ft-file.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.files-preview {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+.files-preview[hidden] { display: none; }
+.files-preview-empty {
+  color: var(--muted);
+  padding: 24px 16px;
+  font-size: 13px;
+  text-align: center;
+}
+.files-preview-header {
+  flex-shrink: 0;
+  display: none;
+}
+.files-preview-actions-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-raised) 40%, transparent);
+}
+.files-preview-path {
+  flex: 1 1 0;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.files-preview-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.files-preview-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.files-preview-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+.files-preview-image {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+.files-preview-image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+.files-preview-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  margin: 0;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-raised) 50%, transparent);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: auto;
 }
 
 /* ─────────── Lab trace panel (inside drawer) ─────────── */

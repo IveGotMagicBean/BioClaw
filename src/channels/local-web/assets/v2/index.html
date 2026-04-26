@@ -61,6 +61,9 @@
         <div id="threadList" class="thread-list" aria-live="polite"></div>
       </aside>
 
+      <!-- Resizer between thread rail and chat -->
+      <div class="col-resizer" id="resizerRail" data-side="rail" role="separator" aria-orientation="vertical" aria-label="Resize thread rail" tabindex="0"></div>
+
       <!-- COL 2: Chat main (always visible) -->
       <section id="panelChat" class="panel panel-chat" role="main">
         <div class="chat-main">
@@ -100,6 +103,9 @@
         </div>
       </section>
 
+      <!-- Resizer between chat and trace -->
+      <div class="col-resizer" id="resizerTrace" data-side="trace" role="separator" aria-orientation="vertical" aria-label="Resize trace panel" tabindex="0"></div>
+
       <!-- COL 3: Trace panel (hidden by default, inline column when open) -->
       <aside class="trace-panel" id="panelTrace" aria-label="Lab trace">
         <div class="trace-head">
@@ -108,7 +114,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
-        <div class="trace-main">
+        <div class="trace-main" id="drawerPaneTrace">
           <div class="trace-toolbar">
             <p class="trace-desc" id="traceSub"></p>
             <div class="trace-actions">
@@ -123,6 +129,13 @@
             <p class="sidebar-hint" id="i18n-sidebar-hint"></p>
             <div id="tree" class="tree"></div>
           </aside>
+        </div>
+        <div class="files-pane" id="drawerPaneFiles" hidden>
+          <div class="files-toolbar">
+            <button type="button" class="files-back-btn" id="filesBackBtn">← Lab Trace</button>
+            <strong class="files-pane-title" id="filesPaneTitle">Preview</strong>
+          </div>
+          <div class="files-preview" id="filesPreview"></div>
         </div>
         <div class="trace-conn-pill" id="traceConnPill" title=""><span id="traceConnLabelInner"></span></div>
       </aside>

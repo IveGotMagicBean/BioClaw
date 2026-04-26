@@ -1,0 +1,10 @@
+FROM python:3.11-slim-bookworm AS python-stage
+
+RUN pip3 install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    matplotlib numpy seaborn pandas
+
+FROM bioclaw-agent:latest
+
+COPY --from=python-stage /usr/local /usr/local

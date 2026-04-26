@@ -747,6 +747,63 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
       }
     }
 
+    /**
+     * Extract file paths from a parsed trace event payload.
+     * Returns array of { name, url } objects, or [] if no previewable files.
+     * Container paths /workspace/group/<rel> map to /files/chat/<jid>/<rel>.
+     */
+    function extractTraceFiles(eventType, parsed) {
+      if (!parsed) return [];
+      var files = [];
+      var seen = {};
+      function addPath(p) {
+        if (!p || typeof p !== 'string') return;
+        // Map container path to web URL
+        var rel = null;
+        var m = p.match(/^\/workspace\/group\/(.+)$/);
+        if (m) rel = m[1];
+        else if (p.indexOf('/files/') === 0) {
+          // Already a web URL
+          var name = decodeURIComponent(p.split('/').pop() || 'file').replace(/^\d{10,}-/, '');
+          if (!seen[p]) { seen[p] = 1; files.push({ name: name, url: p }); }
+          return;
+        }
+        if (!rel) return;
+        var url = '/files/chat/' + encodeURIComponent(chatJid) + '/' + rel.split('/').map(encodeURIComponent).join('/');
+        var fname = rel.split('/').pop() || 'file';
+        if (!seen[url]) { seen[url] = 1; files.push({ name: fname, url: url }); }
+      }
+      // tool_use: parse toolInput JSON for file_path / path / output keys
+      if (eventType === 'agent_tool_use') {
+        var raw = parsed.toolInputFull || parsed.toolInput;
+        if (raw) {
+          try {
+            var input = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (input && typeof input === 'object') {
+              ['file_path', 'path', 'output', 'output_path'].forEach(function (k) { if (input[k]) addPath(input[k]); });
+              // For Bash commands, scrape any /workspace/group/... reference
+              if (typeof input.command === 'string') {
+                var matches = input.command.match(/\/workspace\/group\/[\w./%-]+/g);
+                if (matches) matches.forEach(addPath);
+              }
+            }
+          } catch (_) {}
+        }
+      }
+      // ipc_send: filePath directly
+      if (eventType === 'ipc_send') {
+        if (parsed.filePath) addPath(parsed.filePath);
+      }
+      return files;
+    }
+
+    function fileButtonsHtml(files) {
+      if (!files || !files.length) return '';
+      return '<div class="pstep-files">' + files.map(function (f) {
+        return '<button type="button" class="pstep-file-btn" data-preview-url="' + escAttr(f.url) + '" data-preview-name="' + escAttr(f.name) + '">📄 ' + esc(f.name) + '</button>';
+      }).join('') + '</div>';
+    }
+
     function renderProcessStep(r, t) {
       var parsed = traceParsedPayload(r.payload);
       var cls = pstepIconClass(r.type);
@@ -786,11 +843,13 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
             '<div class="pstep-collapse-body">' + esc(detailStr) + '</div></details>';
         }
       }
+      var filesHtml = fileButtonsHtml(extractTraceFiles(r.type, parsed));
       return '<div class="pstep">' +
         '<div class="pstep-icon ' + cls + '">' + icon + '</div>' +
         '<div class="pstep-body"><span class="pstep-label">' + label + '</span>' +
         (time ? '<span class="pstep-time">' + esc(time) + '</span>' : '') +
         detailHtml +
+        filesHtml +
         '</div></div>';
     }
 
@@ -1217,6 +1276,150 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
     })();
     if (openTraceBtn) openTraceBtn.addEventListener('click', toggleTracePanel);
     if (closeTraceBtn) closeTraceBtn.addEventListener('click', closeTracePanel);
+
+    /* ──────── Drawer file preview (triggered from chat bubble file links) ──────── */
+    var drawerPaneTrace = document.getElementById('drawerPaneTrace');
+    var drawerPaneFiles = document.getElementById('drawerPaneFiles');
+    var filesPreviewEl = document.getElementById('filesPreview');
+    var filesBackBtn = document.getElementById('filesBackBtn');
+    var filesPaneTitle = document.getElementById('filesPaneTitle');
+
+    function showDrawerTrace() {
+      if (drawerPaneTrace) drawerPaneTrace.hidden = false;
+      if (drawerPaneFiles) { drawerPaneFiles.hidden = true; if (filesPreviewEl) filesPreviewEl.innerHTML = ''; }
+      document.body.classList.remove('drawer-preview');
+      var titleEl = document.getElementById('traceDrawerTitle');
+      if (titleEl) titleEl.textContent = T().traceTitle || 'Lab Trace';
+    }
+    function showDrawerPreview(name) {
+      if (drawerPaneTrace) drawerPaneTrace.hidden = true;
+      if (drawerPaneFiles) drawerPaneFiles.hidden = false;
+      document.body.classList.add('drawer-preview');
+      if (filesPaneTitle) filesPaneTitle.textContent = name || 'Preview';
+    }
+    if (filesBackBtn) filesBackBtn.addEventListener('click', showDrawerTrace);
+
+    /* ──────── Column resizers (rail | chat | trace) ──────── */
+    (function setupColResizers() {
+      var unifiedBody = document.getElementById('unifiedBody');
+      var rootEl = document.documentElement;
+      if (!unifiedBody) return;
+
+      // Restore persisted widths
+      try {
+        var savedRail = localStorage.getItem('bioclaw-rail-w');
+        var savedTrace = localStorage.getItem('bioclaw-trace-w');
+        if (savedRail && /^\d+$/.test(savedRail)) rootEl.style.setProperty('--rail-w', savedRail + 'px');
+        if (savedTrace && /^\d+$/.test(savedTrace)) rootEl.style.setProperty('--trace-w-user', savedTrace + 'px');
+      } catch (_) {}
+
+      function bind(handle, side) {
+        if (!handle) return;
+        handle.addEventListener('pointerdown', function (e) {
+          e.preventDefault();
+          var startX = e.clientX;
+          var rect = (side === 'rail' ? document.getElementById('threadRail') : document.getElementById('panelTrace')).getBoundingClientRect();
+          var startW = rect.width;
+          handle.setPointerCapture(e.pointerId);
+          unifiedBody.classList.add('is-resizing');
+          function onMove(ev) {
+            var delta = ev.clientX - startX;
+            // Trace handle is on the LEFT edge of the trace panel → invert delta
+            var newW = side === 'rail' ? startW + delta : startW - delta;
+            newW = Math.max(160, Math.min(window.innerWidth * 0.8, newW));
+            if (side === 'rail') rootEl.style.setProperty('--rail-w', newW + 'px');
+            else rootEl.style.setProperty('--trace-w-user', newW + 'px');
+          }
+          function onUp(ev) {
+            unifiedBody.classList.remove('is-resizing');
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            try {
+              if (side === 'rail') localStorage.setItem('bioclaw-rail-w', parseInt(getComputedStyle(rootEl).getPropertyValue('--rail-w'), 10));
+              else localStorage.setItem('bioclaw-trace-w', parseInt(getComputedStyle(rootEl).getPropertyValue('--trace-w-user'), 10));
+            } catch (_) {}
+          }
+          window.addEventListener('pointermove', onMove);
+          window.addEventListener('pointerup', onUp);
+        });
+        // Double-click resets
+        handle.addEventListener('dblclick', function () {
+          if (side === 'rail') {
+            rootEl.style.removeProperty('--rail-w');
+            try { localStorage.removeItem('bioclaw-rail-w'); } catch (_) {}
+          } else {
+            rootEl.style.removeProperty('--trace-w-user');
+            try { localStorage.removeItem('bioclaw-trace-w'); } catch (_) {}
+          }
+        });
+      }
+      bind(document.getElementById('resizerRail'), 'rail');
+      bind(document.getElementById('resizerTrace'), 'trace');
+    })();
+
+    // Click handler for "preview file" buttons inside trace events
+    var panelTraceEl2 = document.getElementById('panelTrace');
+    if (panelTraceEl2) {
+      panelTraceEl2.addEventListener('click', function (event) {
+        var btn = event.target && event.target.closest ? event.target.closest('.pstep-file-btn[data-preview-url]') : null;
+        if (!btn) return;
+        event.preventDefault();
+        var url = btn.getAttribute('data-preview-url');
+        var name = btn.getAttribute('data-preview-name') || 'file';
+        if (url && window.__bioclawOpenFileInDrawer) window.__bioclawOpenFileInDrawer(url, name);
+      });
+    }
+
+    /**
+     * Open a file in the right drawer's preview pane.
+     * url: full URL like /files/chat/<jid>/<rel>
+     * name: filename for display
+     */
+    async function openFileInDrawer(url, name) {
+      if (!filesPreviewEl) return;
+      // Open the right drawer if not already open
+      if (!document.body.classList.contains('trace-open')) openTracePanel();
+      showDrawerPreview(name);
+      var ext = (name.split('.').pop() || '').toLowerCase();
+      var isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].indexOf(ext) >= 0;
+      var isPdf = ext === 'pdf';
+      var isText = ['py', 'js', 'ts', 'sh', 'json', 'yaml', 'yml', 'css', 'html', 'md', 'txt', 'log', 'csv', 'tsv'].indexOf(ext) >= 0;
+      var actions =
+        '<div class="files-preview-actions-bar">' +
+          '<span class="files-preview-path" title="' + escAttr(name) + '">' + esc(name) + '</span>' +
+          '<a class="file-button" href="' + escAttr(url) + '" target="_blank" rel="noreferrer">Open</a>' +
+          '<a class="file-button" href="' + escAttr(url) + '" download>Download</a>' +
+        '</div>';
+      if (isImage) {
+        filesPreviewEl.innerHTML = actions + '<div class="files-preview-body files-preview-image"><img src="' + escAttr(url) + '" alt="' + escAttr(name) + '"></div>';
+        return;
+      }
+      if (isPdf) {
+        filesPreviewEl.innerHTML = actions + '<div class="files-preview-body"><iframe src="' + escAttr(url) + '" style="width:100%;height:100%;min-height:400px;border:0;border-radius:8px;background:#fff;"></iframe></div>';
+        return;
+      }
+      if (isText) {
+        filesPreviewEl.innerHTML = actions + '<div class="files-preview-body"><pre class="files-preview-code">Loading…</pre></div>';
+        try {
+          var res = await fetch(url);
+          if (!res.ok) {
+            filesPreviewEl.querySelector('.files-preview-code').textContent = 'Failed to load (' + res.status + ')';
+            return;
+          }
+          var text = await res.text();
+          if (text.length > 500000) text = text.slice(0, 500000) + '\n\n… (truncated)';
+          var pre = filesPreviewEl.querySelector('.files-preview-code');
+          if (pre) pre.textContent = text;
+        } catch (e) {
+          var pre2 = filesPreviewEl.querySelector('.files-preview-code');
+          if (pre2) pre2.textContent = 'Error: ' + (e && e.message || e);
+        }
+        return;
+      }
+      filesPreviewEl.innerHTML = actions + '<div class="files-preview-body"><div class="files-preview-empty">Binary file — use Open or Download above.</div></div>';
+    }
+    // Expose globally so other handlers can trigger it
+    window.__bioclawOpenFileInDrawer = openFileInDrawer;
 
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
@@ -2193,10 +2396,29 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
           // Find the bubble's timestamp so we can scroll to the matching run
           var ownerRow = traceJumpBtn.closest('.bubble-row');
           var rowTs = ownerRow ? ownerRow.getAttribute('data-row-ts') : '';
+          showDrawerTrace();
           openTracePanel();
           // After trace renders, jump to the matching task card
           setTimeout(function () { scrollTraceToRun(rowTs); }, 200);
           return;
+        }
+        // Intercept clicks on file links / inline images / "Open" buttons —
+        // open them in the right-drawer preview pane instead of a new tab.
+        var fileTarget = event.target && event.target.closest
+          ? event.target.closest('a[href^="/files/"], img[src^="/files/"]')
+          : null;
+        if (fileTarget && !event.target.closest('[download]')) {
+          var url = fileTarget.tagName === 'IMG' ? fileTarget.getAttribute('src') : fileTarget.getAttribute('href');
+          if (url && url.indexOf('/files/') === 0) {
+            event.preventDefault();
+            var name = decodeURIComponent(url.split('/').pop() || 'file');
+            // Strip timestamp prefix if present (e.g., "1234567890-plot.png" → "plot.png")
+            var stripped = name.replace(/^\d{10,}-/, '');
+            if (window.__bioclawOpenFileInDrawer) {
+              window.__bioclawOpenFileInDrawer(url, stripped);
+            }
+            return;
+          }
         }
         var btn = event.target && event.target.closest
           ? event.target.closest('.copy-btn, .bubble-action-btn[data-copy]')
