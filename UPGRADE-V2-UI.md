@@ -2,6 +2,8 @@
 
 本次升级为 BioClaw 添加了一套全新的 Web UI（V2），同时保留原版界面不变。数据完全兼容，无需迁移。
 
+---
+
 ## 改动总览
 
 ### 新增文件
@@ -27,163 +29,165 @@
 - **所有聊天记录、会话数据、群组配置不受影响**（数据存储在宿主机的 `store/` 和 `groups/` 目录，不在容器内，重建容器也不会丢失）
 - WhatsApp / 微信 / 飞书等其他 channel 不受影响
 - 原有 API 接口不变
+- `.env` 文件不在 git 跟踪范围内，升级时不会被覆盖
 
 ---
-
-## 已有用户升级方法
-
-> 适用于已经 clone 过 BioClaw 仓库的用户。只需下载新文件 + 改几行代码，**不影响原有数据和功能**。
-
-### 方法一：重新拉取（推荐）
-
-如果你的仓库指向本 fork：
-
-```bash
-git pull origin main
-```
-
-pull 后需要重新构建容器以启用流式输出功能：
-
-```bash
-./container/build.sh
-```
-
-然后重启服务：
-
-```bash
-# 如果正在运行，先停止
-npm run stop:web
-
-# 重新启动
-npm run web
-```
-
-> **重启/重建容器会丢数据吗？** 不会。所有聊天记录和配置存储在宿主机的 `store/` 和 `groups/` 目录中，不在容器内。重建容器、重启服务都不影响历史数据。
-
-完成。访问 `http://localhost:3000/v2` 即可使用新界面，原版 `http://localhost:3000/` 不变。
-
-### 方法二：手动添加（适用于不想 pull 全部更新的用户）
-
-#### 第 1 步：下载 V2 前端文件
-
-将以下 3 个文件放到 `src/channels/local-web/assets/v2/` 目录下：
-
-```bash
-mkdir -p src/channels/local-web/assets/v2
-```
-
-从 GitHub 下载：
-
-```bash
-cd src/channels/local-web/assets
-mkdir -p v2
-curl -L "https://raw.githubusercontent.com/<你的用户名>/BioClaw/main/src/channels/local-web/assets/v2/index.html" -o v2/index.html
-curl -L "https://raw.githubusercontent.com/<你的用户名>/BioClaw/main/src/channels/local-web/assets/v2/style.css" -o v2/style.css
-curl -L "https://raw.githubusercontent.com/<你的用户名>/BioClaw/main/src/channels/local-web/assets/v2/app.js" -o v2/app.js
-```
-
-#### 第 2 步：添加 /v2 路由
-
-打开 `src/channels/local-web/channel.ts`，找到以下代码：
-
-```typescript
-if (req.method === 'GET' && url.pathname === '/') {
-  this.serveStaticAsset('/assets/index.html', res);
-  return;
-}
-```
-
-在它**下方**添加：
-
-```typescript
-if (req.method === 'GET' && url.pathname === '/v2') {
-  this.serveStaticAsset('/assets/v2/index.html', res);
-  return;
-}
-```
-
-#### 第 3 步：重启服务
-
-```bash
-npm run stop:web
-npm run web
-```
-
-访问 `http://localhost:3000/v2` 即可。这两步完成后新 UI 就能用了，原版不受影响。
-
-#### 第 4 步（可选）：启用流式输出和 Lab Trace
-
-> 上面三步就能使用新 UI 的外观和基本功能。如果还想启用 **Lab Trace 实时追踪** 和 **流式输出预览**，需要额外修改以下文件。
-
-**4a. `src/container-runner.ts`**
-
-找到 `ContainerOutput` 接口定义：
-
-```typescript
-export interface ContainerOutput {
-  status: 'success' | 'error';
-```
-
-改为：
-
-```typescript
-export interface ContainerOutput {
-  status: 'success' | 'error' | 'streaming';
-```
-
-**4b. `src/index.ts`**
-
-找到 `runAgent` 的 `onOutput` 回调（在 `processAgentMessages` 函数中）：
-
-```typescript
-const output = await runAgent(group, agentId, agentPrompt, replyChatJid, async (result) => {
-    if (result.result) {
-```
-
-在 `if (result.result)` **之前**添加：
-
-```typescript
-    // Streaming chunks only feed the trace/SSE preview — don't push partial
-    // messages to the chat. Wait for the final success chunk.
-    if (result.status === 'streaming') {
-      resetIdleTimer();
-      return;
-    }
-```
-
-**4c. `container/agent-runner/src/index.ts`**
-
-这个改动较大（~160 行），主要是让 OpenAI 兼容接口支持 SSE 流式输出。建议直接从仓库下载替换：
-
-```bash
-curl -L "https://raw.githubusercontent.com/<你的用户名>/BioClaw/main/container/agent-runner/src/index.ts" -o container/agent-runner/src/index.ts
-```
-
-替换后需要重新构建容器并重启：
-
-```bash
-./container/build.sh
-npm run stop:web
-npm run web
-```
-
----
-
-## 使用方式
-
-启动服务后：
-
-- **原版 UI**：`http://localhost:3000/`
-- **V2 UI**：`http://localhost:3000/v2`
-
-两个界面共享同一份数据，可以随时切换。
 
 ## V2 UI 新功能
 
 - 9 套主题切换（default / ocean / sakura / cream / mono-light / midnight / slate / forest / wine）
 - Thread 侧栏管理多个对话
-- Lab Trace drawer（查看 agent 推理过程、工具调用）
-- 流式输出预览（thinking 过程只在 Lab Trace 中显示，最终结果显示在聊天框）
-- 中英文切换
-- 可调节面板大小
+- Lab Trace drawer（实时查看 agent 推理过程、工具调用、IPC 通信）
+- **流式输出**：回答一字一字显示，思考过程只在 Lab Trace 中显示，最终结果显示在聊天框
+- 中英文一键切换
+- 可拖拽调节面板大小
 - 响应式布局（移动端适配）
+
+---
+
+## 全新安装
+
+```bash
+git clone git@github.com:IveGotMagicBean/BioClaw.git
+cd BioClaw
+npm install
+cp .env.example .env       # 编辑填入 API key
+./container/build.sh       # 第一次构建容器，30-60 分钟（需下载生物工具）
+npm run web
+```
+
+启动后：
+- 原版 UI：`http://localhost:3000/`
+- V2 UI：`http://localhost:3000/v2`
+
+---
+
+## 已有用户升级（推荐方式）
+
+> 适用于已经 clone 过原仓库 (`Runchuan-BU/BioClaw`) 的用户。**原目录直接升级**，不需要重新 clone，不需要重填 API key，数据自动保留。
+
+### 第 1 步（建议）：备份当前容器镜像（双保险，方便回退）
+
+```bash
+docker tag bioclaw-agent:latest bioclaw-agent:backup
+```
+
+这步是为了之后想回退时能瞬间切回，不用重新 build。
+
+### 第 2 步：在原 BioClaw 目录加我的 fork 当 remote
+
+```bash
+cd /原来的BioClaw目录
+git remote add v2 git@github.com:IveGotMagicBean/BioClaw.git
+```
+
+> `origin` 仍然指向原仓库 `Runchuan-BU/BioClaw`，`v2` 是额外加的。两边可以共存。
+
+### 第 3 步：拉取 V2 改动
+
+```bash
+git fetch v2
+git merge v2/main
+```
+
+### 第 4 步：重建容器
+
+因为 `container/agent-runner/src/index.ts` 改了（加了 SSE 流式支持），容器需要重建：
+
+```bash
+./container/build.sh
+```
+
+> **为什么很快？** Docker 分层缓存，基础镜像和 apt/pip 包不变，只重跑最后的 COPY 步骤，约 1-2 分钟完成。
+
+### 第 5 步：重启服务
+
+```bash
+npm run stop:web
+npm run web
+```
+
+### 完成
+
+访问 `http://localhost:3000/v2` 使用新界面，原版 `http://localhost:3000/` 不变。
+
+---
+
+## 不喜欢想回退到原版？
+
+V2 改动是可逆的，回退很简单。**数据不会丢**（store/ 和 groups/ 不会被动）。
+
+### 方式 A：有备份镜像（推荐，瞬间完成）
+
+如果升级前做了 Step 1 的备份：
+
+```bash
+git reset --hard origin/main                          # 代码回退
+docker tag bioclaw-agent:backup bioclaw-agent:latest  # 镜像换回备份
+npm run stop:web && npm run web                       # 重启
+```
+
+不需要重新 build 容器，瞬间回退到原版。
+
+### 方式 B：没备份镜像（需要重 build）
+
+```bash
+git reset --hard origin/main
+./container/build.sh           # 用回原版代码重建容器，1-2 分钟
+npm run stop:web && npm run web
+```
+
+> **为什么代码回退还要重建容器？** 因为 V2 改了容器内的 agent-runner 代码（加了流式输出）。如果只回退宿主机代码不重建容器，宿主机不会过滤 streaming chunks，但容器一直在发，会导致聊天框收到很多不完整的消息。所以代码和容器必须一起回退。
+
+---
+
+## 关于 Docker 和 npm 的关系
+
+简单来说：
+
+- `npm run web` 启动的是**宿主机上**的 Node 调度程序
+- 每次有人聊天，调度程序**用 Docker 启动一个临时容器**来跑 agent
+- 容器从 `bioclaw-agent:latest` 镜像克隆出来，干完活就关掉
+
+所以："重启" 分三种：
+
+| 改了什么 | 要做什么 |
+|---|---|
+| 前端文件（HTML/CSS/JS） | 浏览器刷新 |
+| 宿主机代码（`src/`） | 重启 npm（`npm run stop:web && npm run web`） |
+| 容器内代码（`container/`） | 重建镜像（`./container/build.sh`） |
+| Docker Desktop 本身 | **不用动**，正常开着即可 |
+
+V2 升级改了第 2、3 项，所以要重建镜像 + 重启 npm。Docker Desktop 不用碰。
+
+---
+
+## 数据为什么是共享的？
+
+V2 和原版 UI **不是两套独立程序**，只是**同一个后端的两套前端**：
+
+```
+http://localhost:3000/      → 原版 HTML/JS/CSS
+http://localhost:3000/v2    → V2 HTML/JS/CSS
+                            ↓
+                     同一个 Node 服务
+                            ↓
+                  同一个 store/messages.db
+                  同一个 groups/ 目录
+```
+
+两个页面用的都是 `/api/messages`、`/api/threads`、`/api/trace/list` 等同一套 API。所以原版发的消息、V2 也能看到，反之亦然。
+
+---
+
+## 安装位置无关
+
+BioClaw 的 Docker 挂载是**动态的**——根据 `process.cwd()` 算路径：
+
+```ts
+const PROJECT_ROOT = process.cwd();
+export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
+export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
+```
+
+无论装在哪里（`~/code/BioClaw`、`D:\projects\BioClaw`、`/opt/BioClaw`），只要进入目录后 `npm run web`，挂载路径都会自动算对。**不需要任何额外配置。**
