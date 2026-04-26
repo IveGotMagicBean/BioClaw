@@ -866,28 +866,110 @@ button.primary.subtle:hover { background: var(--surface-raised); border-color: v
 }
 @keyframes cursor-blink { 50% { opacity: 0; } }
 
-/* Streaming status summary — brief step log inside the streaming bubble */
-.streaming-status {
-  font-size: 12.5px;
-  line-height: 1.7;
+/* ── Streaming bubble: process strip + answer ── */
+
+.streaming-process {
+  background: color-mix(in srgb, var(--surface-raised) 65%, transparent);
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 70%, var(--border));
+  border-radius: var(--radius-sm);
+  padding: 6px 10px 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.streaming-process > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  user-select: none;
+}
+.streaming-process > summary::-webkit-details-marker { display: none; }
+.streaming-process > summary::before {
+  content: '▾';
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform .15s;
+}
+.streaming-process:not([open]) > summary::before { transform: rotate(-90deg); }
+.streaming-process-label {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 10.5px;
+  color: var(--accent);
+}
+.streaming-process-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.streaming-process-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  padding-left: 2px;
+}
+.ss-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--ink-muted);
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px dashed var(--border);
+  padding: 2px 0;
 }
-.streaming-status:last-child {
-  margin-bottom: 0;
-  padding-bottom: 0;
-  border-bottom: none;
+.ss-step .ss-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 11.5px;
+  margin-top: 1px;
 }
-/* Live streaming response text — the answer being typed out */
-.streaming-text {
+.ss-step .ss-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ss-step.ss-tool .ss-text b {
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 4px;
+}
+.ss-step.ss-tool code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--accent-soft) 50%, transparent);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.ss-step.ss-think .ss-text { color: var(--ink-muted); font-style: italic; }
+.ss-step.ss-spawn .ss-text { color: var(--ink-muted); }
+.ss-step.ss-ipc .ss-text { color: var(--ink-muted); }
+
+/* Answer area — visually clearly separated as the actual response */
+.streaming-answer {
+  position: relative;
+  padding-top: 4px;
+}
+.streaming-answer-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.streaming-answer-body {
   font-size: 14.5px;
   line-height: 1.6;
   color: var(--ink);
 }
+.streaming-answer-body p { margin: 0 0 8px; }
+.streaming-answer-body p:last-child { margin-bottom: 0; }
 
 /* Inline "thinking" pill — small status hint shown in the meta row of a streaming bubble */
 .thinking-pill {
@@ -1397,6 +1479,31 @@ body.drawer-preview .trace-conn-pill { display: none; }
 
 /* Hide the unused old tree-related classes (kept for backwards-compat with other code paths) */
 .files-tree, .files-tree-empty, .files-tree-loading { display: none; }
+
+/* Trace mode segmented toggle (Compact / Full) */
+.trace-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.trace-mode-btn {
+  background: transparent;
+  border: none;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.trace-mode-btn + .trace-mode-btn { border-left: 1px solid var(--border); }
+.trace-mode-btn:hover { color: var(--ink); }
+.trace-mode-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
 
 /* "Preview file" buttons inside trace events */
 .pstep-files {

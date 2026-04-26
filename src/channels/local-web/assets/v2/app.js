@@ -833,7 +833,9 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
       }
 
       var detailHtml = '';
-      if (detail) {
+      // In compact mode, hide all the verbose detail content (thinking text, command bodies, etc).
+      // Only step label + time + file buttons. Full mode keeps the detail visible.
+      if (detail && traceShowStream) {
         var detailStr = String(detail);
         if (detailStr.length <= 80) {
           detailHtml = '<div class="pstep-detail short">' + esc(detailStr) + '</div>';
@@ -988,7 +990,7 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
           html += '<span class="evt-s-title">' + evLabel + '</span>';
           if (evTime) html += '<span class="evt-s-time">' + esc(evTime) + '</span>';
           html += '</div>';
-          if (evDetail) {
+          if (evDetail && traceShowStream) {
             var evShort = evDetail.length <= 60;
             if (evShort) {
               html += '<div class="evt-s-detail">' + esc(evDetail) + '</div>';
@@ -1053,7 +1055,11 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
     function traceListQuery() {
       var g = groupSel.value;
       var q = '/api/trace/list?limit=400' + (g ? '&group_folder=' + encodeURIComponent(g) : '');
-      if (!traceShowStream) q += '&compact=1';
+      // Both modes hide the noisy stream_output chunks. Thinking + tool_use steps
+      // are kept in BOTH modes so the user can see *what kind* of step happened.
+      // The difference is detail visibility — in compact mode the renderer hides
+      // the body content (thinking text, command bodies) and only shows step labels.
+      q += '&compact=1';
       return q;
     }
 
@@ -1124,6 +1130,27 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
         loadTrace();
       });
     }
+    // Trace verbosity segmented toggle (Compact / Full)
+    var traceModeCompact = document.getElementById('traceModeCompact');
+    var traceModeFull = document.getElementById('traceModeFull');
+    function applyTraceMode(full) {
+      traceShowStream = !!full;
+      if (traceStreamCb) traceStreamCb.checked = traceShowStream;
+      if (traceModeCompact) {
+        traceModeCompact.classList.toggle('is-active', !full);
+        traceModeCompact.setAttribute('aria-pressed', String(!full));
+      }
+      if (traceModeFull) {
+        traceModeFull.classList.toggle('is-active', !!full);
+        traceModeFull.setAttribute('aria-pressed', String(!!full));
+      }
+      try { localStorage.setItem('bioclaw-trace-stream', full ? '1' : '0'); } catch (_) {}
+      loadTrace();
+    }
+    if (traceModeCompact) traceModeCompact.addEventListener('click', function () { applyTraceMode(false); });
+    if (traceModeFull) traceModeFull.addEventListener('click', function () { applyTraceMode(true); });
+    // Sync initial UI state from stored value
+    (function () { applyTraceMode(traceShowStream); })();
 
     langBtn.addEventListener('click', function () {
       applyLang(lang === 'zh' ? 'en' : 'zh');
@@ -1702,18 +1729,23 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
             var contentEl = streamingBubble.querySelector('.content');
             if (contentEl) {
               var html = '';
+              // Process steps strip — visually distinct block ("Process") with timeline-style cards
               if (steps.length) {
-                var statusLines = steps.slice(-5).map(function (s) {
-                  if (s.kind === 'thinking') return '💭 ' + esc(truncateText(s.detail, 120));
-                  if (s.kind === 'tool') return '⚙ ' + esc(s.label) + (s.detail ? '：' + esc(truncateText(s.detail, 80)) : '');
-                  if (s.kind === 'spawn') return '▶ ' + esc(s.detail);
-                  if (s.kind === 'ipc') return '↗ ' + esc(truncateText(s.detail, 80));
-                  return '· ' + esc(truncateText(s.detail || s.label, 100));
-                });
-                html += '<div class="streaming-status">' + statusLines.join('<br>') + '</div>';
+                var stepCards = steps.slice(-6).map(function (s) {
+                  if (s.kind === 'thinking') return '<div class="ss-step ss-think"><span class="ss-icon">💭</span><span class="ss-text">' + esc(truncateText(s.detail, 160)) + '</span></div>';
+                  if (s.kind === 'tool') return '<div class="ss-step ss-tool"><span class="ss-icon">⚙</span><span class="ss-text"><b>' + esc(s.label) + '</b>' + (s.detail ? ' <code>' + esc(truncateText(s.detail, 80)) + '</code>' : '') + '</span></div>';
+                  if (s.kind === 'spawn') return '<div class="ss-step ss-spawn"><span class="ss-icon">▶</span><span class="ss-text">' + esc(s.detail) + '</span></div>';
+                  if (s.kind === 'ipc') return '<div class="ss-step ss-ipc"><span class="ss-icon">↗</span><span class="ss-text">' + esc(truncateText(s.detail, 100)) + '</span></div>';
+                  return '<div class="ss-step"><span class="ss-icon">·</span><span class="ss-text">' + esc(truncateText(s.detail || s.label, 100)) + '</span></div>';
+                }).join('');
+                html += '<details class="streaming-process" open>' +
+                  '<summary><span class="streaming-process-label">Process</span><span class="streaming-process-count">' + steps.length + ' step' + (steps.length === 1 ? '' : 's') + '</span></summary>' +
+                  '<div class="streaming-process-body">' + stepCards + '</div>' +
+                '</details>';
               }
+              // Answer area — what the user is here to read; clearly separated and styled like a real bubble
               if (lastEventKind === 'stream' && lastPreview) {
-                html += '<div class="streaming-text">' + markdownToSafeHtml(lastPreview) + '</div>';
+                html += '<div class="streaming-answer"><div class="streaming-answer-label">Answer</div><div class="streaming-answer-body">' + markdownToSafeHtml(lastPreview) + '</div></div>';
               }
               if (html && contentEl.innerHTML !== html) {
                 contentEl.innerHTML = html;
@@ -2187,10 +2219,21 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
       // streaming bubble, FINALIZE it (preserve content + steps) instead of
       // clearing — otherwise the thinking history is lost.
       if (latestIsAssistant && !finalizedNodes[lastTs] && streamingBubble) {
-        // Replace the (possibly truncated) streaming preview with the full final content
+        // Replace the (possibly truncated) streaming preview with the full final content,
+        // BUT preserve the Process strip (the "thinking history") so the user can still
+        // see what the agent did. Collapse it by default — answer is what they want first.
         var finalContent = messages[messages.length - 1].content;
         var contentEl = streamingBubble.querySelector('.content');
-        if (contentEl) contentEl.innerHTML = renderBody(finalContent);
+        if (contentEl) {
+          var existingProcess = contentEl.querySelector('.streaming-process');
+          var preservedProcessHtml = '';
+          if (existingProcess) {
+            // Force-collapse the preserved process strip so the final answer is the focus.
+            existingProcess.removeAttribute('open');
+            preservedProcessHtml = existingProcess.outerHTML;
+          }
+          contentEl.innerHTML = preservedProcessHtml + renderBody(finalContent);
+        }
         var bubbleEl = streamingBubble.querySelector('.bubble');
         if (bubbleEl && !bubbleEl.querySelector('.bubble-actions')) {
           var encoded = escAttr(encodeURIComponent(String(finalContent)));

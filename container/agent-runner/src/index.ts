@@ -1523,14 +1523,39 @@ async function callOpenAICompatibleApi(
     .sort((a, b) => Number(a) - Number(b))
     .map(k => aggregatedToolCalls[Number(k)])
     .filter(tc => tc.function.name)
-    .map(tc => ({
-      id: tc.id || '',
-      type: 'function' as const,
-      function: {
-        name: tc.function.name || '',
-        arguments: tc.function.arguments || '',
-      },
-    }));
+    .map(tc => {
+      // Streaming SSE delivers arguments as fragments; if assembly produced
+      // invalid/empty JSON the next API call will be rejected with
+      // `function.arguments parameter must be in JSON format`. Normalize to '{}'
+      // when the assembled string isn't a parseable JSON object.
+      const argsRaw = (tc.function.arguments || '').trim();
+      let args = argsRaw;
+      if (!args) {
+        args = '{}';
+      } else {
+        try { JSON.parse(args); }
+        catch { args = '{}'; }
+      }
+      return {
+        id: tc.id || '',
+        type: 'function' as const,
+        function: {
+          name: tc.function.name || '',
+          arguments: args,
+        },
+      };
+    });
+
+  // If we ended up with tool_calls whose arguments all degraded to '{}' (likely
+  // because streaming was truncated mid-flight), retry without streaming so the
+  // model returns a clean, complete response.
+  if (toolCalls.length && useStream) {
+    const allEmpty = toolCalls.every(tc => tc.function.arguments === '{}');
+    if (allEmpty) {
+      log('Streaming produced empty/invalid tool_call arguments; retrying without stream');
+      return callOpenAICompatibleApi(providerConfig, messages);
+    }
+  }
 
   return {
     role: 'assistant' as const,

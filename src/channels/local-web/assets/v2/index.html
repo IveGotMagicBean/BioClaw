@@ -119,7 +119,12 @@
             <p class="trace-desc" id="traceSub"></p>
             <div class="trace-actions">
               <label class="fld"><span id="i18n-group-label"></span> <select id="group"><option value="" id="opt-all"></option></select></label>
-              <label class="trace-opt" for="traceShowStream"><input type="checkbox" id="traceShowStream" /><span id="traceStreamLabel"></span></label>
+              <div class="trace-mode-toggle" role="group" aria-label="Trace verbosity">
+                <button type="button" class="trace-mode-btn is-active" id="traceModeCompact" aria-pressed="true">Compact</button>
+                <button type="button" class="trace-mode-btn" id="traceModeFull" aria-pressed="false">Full</button>
+              </div>
+              <input type="checkbox" id="traceShowStream" hidden />
+              <span id="traceStreamLabel" hidden></span>
               <button type="button" class="btn-trace" id="reloadTrace"></button>
             </div>
           </div>

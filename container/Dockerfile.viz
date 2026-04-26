@@ -7,4 +7,10 @@ RUN pip3 install --no-cache-dir \
 
 FROM bioclaw-agent:latest
 
+# Copy Python runtime + plotting libs from stage 1 (skips broken Debian mirrors)
 COPY --from=python-stage /usr/local /usr/local
+
+# Rebuild agent-runner with latest source (so SSE streaming fixes etc. take effect)
+WORKDIR /app
+COPY agent-runner/ ./
+RUN npm run build
