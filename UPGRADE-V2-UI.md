@@ -45,7 +45,7 @@
 ## 全新用户安装
 
 ```bash
-git clone git@github.com:IveGotMagicBean/BioClaw.git
+git clone git@github.com:Runchuan-BU/BioClaw.git
 cd BioClaw
 npm install
 cp .env.example .env       # 编辑填入 API key
@@ -71,23 +71,14 @@ npm run web
 docker tag bioclaw-agent:latest bioclaw-agent:backup
 ```
 
-### 第 2 步：在原 BioClaw 目录加我的 fork 当 remote
+### 第 2 步：拉取 V2 改动
 
 ```bash
 cd /原来的BioClaw目录
-git remote add v2 git@github.com:IveGotMagicBean/BioClaw.git
+git pull origin main
 ```
 
-> `origin` 仍指向原仓库，`v2` 是额外加的，两边共存。
-
-### 第 3 步：拉取 V2 改动
-
-```bash
-git fetch v2
-git merge v2/main
-```
-
-### 第 4 步：重建容器并重启
+### 第 3 步：重建容器并重启
 
 ```bash
 ./container/build.sh                # 1-2 分钟（缓存复用，只重跑 COPY 步骤）
