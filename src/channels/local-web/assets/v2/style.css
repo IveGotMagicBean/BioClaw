@@ -1480,6 +1480,41 @@ body.drawer-preview .trace-conn-pill { display: none; }
 /* Hide the unused old tree-related classes (kept for backwards-compat with other code paths) */
 .files-tree, .files-tree-empty, .files-tree-loading { display: none; }
 
+/* Natural-language summary in trace step labels */
+.pstep-natural {
+  color: var(--ink);
+  font-weight: 400;
+  font-size: 12.5px;
+}
+.pstep-natural::before { content: ''; }
+
+/* Language toggle in header (中 / EN) */
+.lang-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--surface);
+  height: 30px;
+}
+.lang-btn {
+  background: transparent;
+  border: none;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  min-width: 32px;
+  transition: background .12s, color .12s;
+}
+.lang-btn + .lang-btn { border-left: 1px solid var(--border); }
+.lang-btn:hover { color: var(--ink); }
+.lang-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* Trace mode segmented toggle (Compact / Full) */
 .trace-mode-toggle {
   display: inline-flex;

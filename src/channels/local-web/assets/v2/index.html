@@ -165,7 +165,11 @@
         <h3 id="secDisplay"></h3>
         <div class="setting-row">
           <span class="setting-label" id="lblLang"></span>
-          <button type="button" class="btn-setting" id="langBtn"></button>
+          <div class="lang-toggle" role="group" aria-label="Language">
+            <button type="button" class="lang-btn" id="langBtnZh" data-lang="zh">中</button>
+            <button type="button" class="lang-btn" id="langBtnEn" data-lang="en">EN</button>
+          </div>
+          <button type="button" class="btn-setting" id="langBtn" hidden></button>
         </div>
         <div class="setting-stack">
           <span class="setting-label" id="lblTheme"></span>

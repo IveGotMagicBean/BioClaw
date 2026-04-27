@@ -691,8 +691,9 @@ function buildGlobalSystemPrompt(
   );
   const routingBlock = taskRouting?.systemBlock || '';
   const workdirBlock = `\n\n[Current working directory]\n${currentWorkdir}\n`;
+  const languageBlock = `\n\n[Language policy]\nDetect the language the user is writing in and reply in the same language. If the user writes in Chinese, reply in Chinese; if in English, reply in English; otherwise mirror their language. This applies to both your final answer and any "send_message" / progress updates. Tool inputs (commands, file paths, code) stay in their natural form (English/code).\n`;
 
-  return bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + routingBlock + workdirBlock;
+  return bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + routingBlock + workdirBlock + languageBlock;
 }
 
 function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
@@ -1418,32 +1419,49 @@ async function callOpenAICompatibleApi(
   const baseUrl = providerConfig.baseUrl.replace(/\/+$/, '');
   const useStream = !!onChunk;
 
-  let response: Response;
-  try {
-    response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${providerConfig.apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://github.com/Runchuan-BU/BioClaw',
-        'X-Title': 'BioClaw',
-      },
-      body: JSON.stringify({
-        model: providerConfig.model,
-        messages,
-        tools: getOpenAICompatibleTools(),
-        tool_choice: 'auto',
-        temperature: 0.2,
-        stream: useStream,
-      }),
-    });
-  } catch (fetchErr) {
+  // Retry on transient network errors (ECONNRESET, fetch failed) with exponential
+  // backoff. DashScope/qwen sometimes resets connections under load — without
+  // retries, the whole agent run fails on the first hiccup.
+  const MAX_RETRIES = 4;
+  const requestBody = JSON.stringify({
+    model: providerConfig.model,
+    messages,
+    tools: getOpenAICompatibleTools(),
+    tool_choice: 'auto',
+    temperature: 0.2,
+    stream: useStream,
+  });
+  let response: Response | null = null;
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${providerConfig.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/Runchuan-BU/BioClaw',
+          'X-Title': 'BioClaw',
+        },
+        body: requestBody,
+      });
+      break;
+    } catch (fetchErr) {
+      lastErr = fetchErr;
+      const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+      const isLast = attempt === MAX_RETRIES - 1;
+      if (isLast) break;
+      const delayMs = 500 * Math.pow(2, attempt);   // 500ms, 1s, 2s, 4s
+      log(`Provider fetch failed (${errMsg}), retry ${attempt + 1}/${MAX_RETRIES - 1} in ${delayMs}ms`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  if (!response) {
     if (useStream) {
-      log(`Streaming fetch failed (${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}); retrying without stream`);
-      // Recursive call with onChunk=undefined → non-streaming mode
+      log(`All ${MAX_RETRIES} streaming attempts failed; falling back to non-streaming`);
       return callOpenAICompatibleApi(providerConfig, messages);
     }
-    throw fetchErr;
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
   if (!response.ok) {

@@ -700,6 +700,390 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
       }).join('') + '</div>';
     }
 
+
+    /**
+     * Walk a flat steps array and pair each `thinking` step with the next `tool`
+     * step that follows. The thinking text becomes `tool.thinkingPreview`, and
+     * the standalone thinking step is dropped (its content lives on the tool now).
+     * If a thinking step has no following tool (last in run, etc.), it stays
+     * as its own step.
+     */
+    function pairThinkingWithTool(steps) {
+      var out = [];
+      var pendingThinking = null;
+      for (var i = 0; i < steps.length; i++) {
+        var s = steps[i];
+        if (s.kind === 'thinking') {
+          // If there's already a pending thinking, push the older one first
+          if (pendingThinking) out.push(pendingThinking);
+          pendingThinking = s;
+          continue;
+        }
+        if (s.kind === 'tool' && pendingThinking) {
+          // Attach the thinking text to this tool step and consume it
+          var merged = {};
+          for (var k in s) if (s.hasOwnProperty(k)) merged[k] = s[k];
+          merged.thinkingPreview = pendingThinking.detail || '';
+          out.push(merged);
+          pendingThinking = null;
+          continue;
+        }
+        // Non-tool, non-thinking — flush pending thinking, then push this
+        if (pendingThinking) { out.push(pendingThinking); pendingThinking = null; }
+        out.push(s);
+      }
+      if (pendingThinking) out.push(pendingThinking);
+      return out;
+    }
+
+    /**
+     * Turn a step (thinking/tool) into a one-line plain-language summary
+     * understandable by a biology user with zero CS/AI background.
+     * E.g. "正在分析序列相似性" / "Comparing sequence similarity".
+     * Returns null if no summary is available.
+     */
+    function humanizeStep(kind, toolName, rawInput, rawText) {
+      var zh = (lang === 'zh');
+      function clip(s, n) { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; }
+      function parseInput(v) {
+        if (!v) return null;
+        if (typeof v === 'object') return v;
+        try { return JSON.parse(v); } catch (_) { return null; }
+      }
+      function basename(p) { return String(p || '').split('/').filter(Boolean).pop() || p; }
+      function hostname(u) {
+        try { return new URL(u).hostname.replace(/^www\./, ''); } catch (_) { return String(u || ''); }
+      }
+      // Friendly database / website name from URL
+      function siteToFriendly(host) {
+        host = String(host || '').toLowerCase();
+        // Literature & preprints
+        if (host.includes('pubmed.ncbi') || host.includes('ncbi.nlm.nih.gov/pubmed')) return zh ? 'PubMed 文献库' : 'PubMed';
+        if (host.includes('biorxiv')) return zh ? 'bioRxiv 预印本' : 'bioRxiv';
+        if (host.includes('medrxiv')) return zh ? 'medRxiv 预印本' : 'medRxiv';
+        if (host.includes('arxiv')) return 'arXiv';
+        if (host.includes('nature.com') || host.includes('cell.com') || host.includes('science.org')) return zh ? '期刊文章' : 'a journal article';
+        if (host.includes('plos.org')) return 'PLOS';
+        if (host.includes('elifesciences')) return 'eLife';
+        if (host.includes('frontiersin')) return zh ? 'Frontiers 期刊' : 'Frontiers journal';
+        if (host.includes('scholar.google')) return zh ? 'Google Scholar 学术搜索' : 'Google Scholar';
+        if (host.includes('semanticscholar')) return 'Semantic Scholar';
+        // Sequence/genome databases
+        if (host.includes('ncbi.nlm.nih.gov')) return zh ? 'NCBI 数据库' : 'NCBI';
+        if (host.includes('ddbj.nig.ac.jp')) return 'DDBJ';
+        if (host.includes('ebi.ac.uk')) return zh ? 'EBI 数据库' : 'EBI';
+        if (host.includes('ensembl')) return zh ? 'Ensembl 基因组库' : 'Ensembl';
+        if (host.includes('ucsc.edu') || host.includes('genome.ucsc.edu')) return zh ? 'UCSC 基因组浏览器' : 'UCSC Genome Browser';
+        if (host.includes('1000genomes')) return zh ? '1000 Genomes 计划' : '1000 Genomes';
+        if (host.includes('gnomad')) return zh ? 'gnomAD 群体变异库' : 'gnomAD';
+        if (host.includes('clinvar')) return 'ClinVar';
+        if (host.includes('omim')) return zh ? 'OMIM 遗传病数据库' : 'OMIM';
+        // Proteins & structures
+        if (host.includes('uniprot')) return zh ? 'UniProt 蛋白库' : 'UniProt';
+        if (host.includes('rcsb') || host.includes('pdb.org')) return zh ? 'PDB 蛋白结构库' : 'PDB';
+        if (host.includes('alphafold')) return zh ? 'AlphaFold 结构数据库' : 'AlphaFold DB';
+        if (host.includes('interpro')) return 'InterPro';
+        if (host.includes('pfam')) return 'Pfam';
+        if (host.includes('string-db')) return zh ? 'STRING 蛋白互作' : 'STRING';
+        if (host.includes('biogrid')) return 'BioGRID';
+        // Pathways & ontologies
+        if (host.includes('kegg')) return zh ? 'KEGG 通路库' : 'KEGG';
+        if (host.includes('reactome')) return zh ? 'Reactome 通路库' : 'Reactome';
+        if (host.includes('geneontology') || host.includes('amigo.geneontology')) return zh ? 'Gene Ontology (GO)' : 'Gene Ontology';
+        if (host.includes('msigdb')) return zh ? 'MSigDB 基因集' : 'MSigDB';
+        if (host.includes('enrichr')) return 'Enrichr';
+        // Single-cell / expression
+        if (host.includes('humancellatlas') || host.includes('data.humancellatlas')) return zh ? 'Human Cell Atlas' : 'Human Cell Atlas';
+        if (host.includes('gtex')) return zh ? 'GTEx 表达图谱' : 'GTEx';
+        if (host.includes('tcga') || host.includes('gdc.cancer.gov')) return zh ? 'TCGA 癌症基因组' : 'TCGA';
+        if (host.includes('cellxgene')) return 'CELLxGENE';
+        // Drugs / chemistry
+        if (host.includes('drugbank')) return 'DrugBank';
+        if (host.includes('chembl')) return 'ChEMBL';
+        if (host.includes('pubchem')) return 'PubChem';
+        // Tools / orgs
+        if (host.includes('addgene')) return 'Addgene';
+        if (host.includes('jax.org')) return zh ? 'JAX 小鼠数据库' : 'JAX';
+        if (host.includes('mgi.jax')) return zh ? 'MGI 小鼠基因库' : 'MGI';
+        if (host.includes('flybase')) return 'FlyBase';
+        if (host.includes('wormbase')) return 'WormBase';
+        if (host.includes('zfin')) return 'ZFIN';
+        if (host.includes('sgd') && host.includes('stanford')) return 'SGD';
+        if (host.includes('arabidopsis') || host.includes('tair')) return 'TAIR';
+        // Generic
+        if (host.includes('github.com') || host.includes('githubusercontent')) return 'GitHub';
+        if (host.includes('huggingface')) return zh ? 'Hugging Face 模型库' : 'Hugging Face';
+        if (host.includes('wikipedia')) return zh ? '维基百科' : 'Wikipedia';
+        return host;
+      }
+      // Friendly description from filename extension
+      function fileKind(name) {
+        name = String(name || '').toLowerCase();
+        if (/\.(fasta|fa|fna|faa|ffn|frn|mfa)$/.test(name)) return zh ? '序列文件' : 'sequence file';
+        if (/\.(fastq|fq)(\.gz)?$/.test(name)) return zh ? '测序数据' : 'sequencing reads';
+        if (/\.(sam|bam|cram)$/.test(name)) return zh ? '比对文件' : 'alignment file';
+        if (/\.(vcf|bcf)(\.gz)?$/.test(name)) return zh ? '变异文件' : 'variant file';
+        if (/\.(gff3?|gtf|bed)$/.test(name)) return zh ? '基因组注释' : 'genomic annotation';
+        if (/\.(h5ad|loom)$/.test(name)) return zh ? '单细胞数据' : 'single-cell dataset';
+        if (/\.(h5|hdf5)$/.test(name)) return zh ? 'HDF5 数据' : 'HDF5 data';
+        if (/\.(mtx|mtx\.gz)$/.test(name)) return zh ? '矩阵数据' : 'matrix data';
+        if (/\.(nwk|tree|newick)$/.test(name)) return zh ? '系统发育树' : 'phylogenetic tree';
+        if (/\.(pdb|cif|mmcif|mol2)$/.test(name)) return zh ? '蛋白结构文件' : 'structure file';
+        if (/\.(sdf|mol)$/.test(name)) return zh ? '化合物结构' : 'chemical structure';
+        if (/\.(csv|tsv)$/.test(name)) return zh ? '数据表' : 'data table';
+        if (/\.(xlsx?|xls)$/.test(name)) return zh ? 'Excel 表格' : 'Excel spreadsheet';
+        if (/\.(parquet|feather|arrow)$/.test(name)) return zh ? '列式数据' : 'columnar data';
+        if (/\.(npy|npz)$/.test(name)) return zh ? 'NumPy 数组' : 'NumPy array';
+        if (/\.(pkl|pickle)$/.test(name)) return zh ? 'Python 数据对象' : 'Python data';
+        if (/\.(png|jpe?g|svg|webp|gif|tiff?)$/.test(name)) return zh ? '图片' : 'image';
+        if (/\.pdf$/.test(name)) return zh ? 'PDF 文献/文档' : 'PDF document';
+        if (/\.docx?$/.test(name)) return zh ? 'Word 文档' : 'Word document';
+        if (/\.(py|ipynb)$/.test(name)) return zh ? '分析脚本' : 'analysis script';
+        if (/\.(r|rmd)$/.test(name)) return zh ? 'R 脚本' : 'R script';
+        if (/\.(sh|bash)$/.test(name)) return zh ? 'Shell 脚本' : 'shell script';
+        if (/\.(md|markdown)$/.test(name)) return zh ? 'Markdown 文档' : 'Markdown document';
+        if (/\.(yaml|yml|toml|ini|cfg)$/.test(name)) return zh ? '配置文件' : 'config file';
+        if (/\.json$/.test(name)) return zh ? 'JSON 数据' : 'JSON data';
+        if (/\.(xml|html?)$/.test(name)) return zh ? 'XML/HTML 文件' : 'XML/HTML file';
+        if (/\.(txt|log)$/.test(name)) return zh ? '说明文档' : 'document';
+        if (/\.(zip|tar|tar\.gz|tgz|gz|bz2|xz|7z|rar)$/.test(name)) return zh ? '压缩包' : 'archive';
+        return zh ? '文件' : 'file';
+      }
+
+      // ── Thinking → just a plain label, no content ──
+      if (kind === 'thinking') {
+        return zh ? '思考中…' : 'Thinking…';
+      }
+
+      // ── Tool calls → biology-friendly description ──
+      if (kind === 'tool') {
+        var input = parseInput(rawInput) || {};
+        var name = String(toolName || '').trim();
+        // Normalize OpenAI-compatible snake_case tool names → Claude PascalCase equivalents
+        // so we don't have to repeat every case.
+        var nameAliases = {
+          'bash': 'Bash',
+          'write_file': 'Write',
+          'read_file': 'Read',
+          'edit_file': 'Edit',
+          'list_files': 'Glob',
+          'send_message': 'SendMessage',
+          'send_image': 'SendImage',
+          'schedule_task': 'ScheduleTask',
+        };
+        if (nameAliases[name]) name = nameAliases[name];
+        switch (name) {
+          case 'Bash': {
+            var cmd = String(input.command || '').trim();
+            var head = cmd.split(/\s+/)[0] || '';
+            // BLAST family
+            if (/^blastn$/.test(head))   return zh ? '比对核酸序列相似性 (BLAST)' : 'Comparing DNA sequence similarity (BLAST)';
+            if (/^blastp$/.test(head))   return zh ? '比对蛋白序列相似性 (BLAST)' : 'Comparing protein sequence similarity (BLAST)';
+            if (/^blastx$/.test(head))   return zh ? '将核酸翻译后比对蛋白库 (BLASTX)' : 'Translating DNA and BLASTing against proteins';
+            if (/^tblastn$/.test(head))  return zh ? '用蛋白搜索翻译后的基因组' : 'Searching translated genomes with a protein';
+            if (/^tblastx$/.test(head))  return zh ? '六框翻译比对 (TBLASTX)' : 'Six-frame translated BLAST';
+            if (/^psiblast$/.test(head)) return zh ? 'PSI-BLAST 迭代搜索' : 'Iterative PSI-BLAST search';
+            if (/^makeblastdb$/.test(head)) return zh ? '建立 BLAST 数据库' : 'Building BLAST database';
+            // Alignment & mapping
+            if (head === 'samtools') {
+              var subN = (cmd.match(/samtools\s+(\w+)/) || [])[1] || '';
+              if (subN === 'view')      return zh ? '查看比对文件' : 'Inspecting alignment file';
+              if (subN === 'sort')      return zh ? '整理比对文件' : 'Sorting alignment file';
+              if (subN === 'index')     return zh ? '为比对文件建索引' : 'Indexing alignment file';
+              if (subN === 'flagstat')  return zh ? '统计比对结果' : 'Summarizing alignment stats';
+              if (subN === 'depth')     return zh ? '计算覆盖深度' : 'Computing coverage depth';
+              if (subN === 'mpileup')   return zh ? '生成位点级覆盖' : 'Generating per-site pileup';
+              if (subN === 'merge')     return zh ? '合并比对文件' : 'Merging alignment files';
+              if (subN === 'faidx')     return zh ? '为参考序列建索引' : 'Indexing reference FASTA';
+              return zh ? '处理测序比对数据' : 'Working with alignment data';
+            }
+            if (head === 'bcftools') {
+              var bcfSub = (cmd.match(/bcftools\s+(\w+)/) || [])[1] || '';
+              if (bcfSub === 'view')   return zh ? '查看变异文件' : 'Inspecting variant file';
+              if (bcfSub === 'call')   return zh ? '调用变异位点' : 'Calling variants';
+              if (bcfSub === 'filter') return zh ? '过滤变异' : 'Filtering variants';
+              if (bcfSub === 'merge')  return zh ? '合并变异文件' : 'Merging variant files';
+              if (bcfSub === 'norm')   return zh ? '规范化变异' : 'Normalizing variants';
+              if (bcfSub === 'stats')  return zh ? '统计变异信息' : 'Computing variant stats';
+              return zh ? '处理变异数据' : 'Working with variant data';
+            }
+            if (head === 'vcftools')  return zh ? '处理 VCF 变异文件' : 'Working with VCF variants';
+            if (head === 'bedtools')  return zh ? '处理基因组区间' : 'Working with genomic intervals';
+            if (head === 'tabix')     return zh ? '为压缩文件建索引' : 'Indexing compressed file';
+            if (head === 'bgzip')     return zh ? '压缩生物文件' : 'Compressing bio file';
+            if (head === 'fastqc')    return zh ? '检查测序质量' : 'Checking sequencing quality';
+            if (head === 'multiqc')   return zh ? '汇总质量报告' : 'Aggregating QC reports';
+            if (head === 'trimmomatic' || head === 'fastp' || head === 'cutadapt') return zh ? '清洗测序数据' : 'Trimming sequencing reads';
+            if (head === 'minimap2')  return zh ? '比对长读长测序数据' : 'Aligning long-read sequencing data';
+            if (head === 'bwa')       return zh ? '比对短读长测序数据' : 'Aligning short-read sequencing data';
+            if (head === 'bowtie2' || head === 'bowtie') return zh ? '比对短读长测序数据' : 'Aligning short reads';
+            if (head === 'star' || head === 'STAR') return zh ? '比对 RNA-seq 数据' : 'Aligning RNA-seq reads';
+            if (head === 'hisat2')    return zh ? '比对 RNA-seq 数据' : 'Aligning RNA-seq reads';
+            if (head === 'tophat' || head === 'tophat2') return zh ? '比对 RNA-seq 数据' : 'Aligning RNA-seq reads';
+            if (head === 'salmon')    return zh ? '定量转录本表达' : 'Quantifying transcripts';
+            if (head === 'kallisto')  return zh ? '伪比对定量表达' : 'Pseudoaligning for expression';
+            if (head === 'featureCounts' || head === 'htseq-count') return zh ? '统计基因表达计数' : 'Counting gene reads';
+            if (head === 'stringtie') return zh ? '组装转录本' : 'Assembling transcripts';
+            if (head === 'cufflinks') return zh ? '组装转录本 (Cufflinks)' : 'Assembling transcripts (Cufflinks)';
+            // Sequence tools
+            if (head === 'seqtk')     return zh ? '处理序列文件' : 'Working with sequence files';
+            if (head === 'seqkit')    return zh ? '处理序列文件 (seqkit)' : 'Working with sequences (seqkit)';
+            if (head === 'gffread')   return zh ? '处理基因组注释' : 'Processing GFF/GTF annotations';
+            // Multiple alignment & phylogenetics
+            if (head === 'mafft')     return zh ? '多序列比对 (MAFFT)' : 'Multiple sequence alignment (MAFFT)';
+            if (head === 'muscle')    return zh ? '多序列比对 (MUSCLE)' : 'Multiple sequence alignment (MUSCLE)';
+            if (head === 'clustalo' || head === 'clustalw') return zh ? '多序列比对 (Clustal)' : 'Multiple sequence alignment (Clustal)';
+            if (head === 'tcoffee' || head === 't_coffee') return zh ? '多序列比对 (T-Coffee)' : 'Multiple sequence alignment';
+            if (head === 'iqtree' || head === 'iqtree2') return zh ? '构建系统发育树 (IQ-TREE)' : 'Building phylogenetic tree';
+            if (head === 'raxml' || head === 'raxml-ng') return zh ? '构建系统发育树 (RAxML)' : 'Building phylogenetic tree';
+            if (head === 'fasttree')  return zh ? '快速建树' : 'Building approximate tree';
+            // Profile / domain search
+            if (head === 'hmmscan' || head === 'hmmsearch') return zh ? '蛋白结构域搜索 (HMMER)' : 'Protein domain search (HMMER)';
+            if (head === 'hmmbuild') return zh ? '构建 HMM 模型' : 'Building HMM profile';
+            if (head === 'interproscan' || head === 'interproscan.sh') return zh ? '蛋白功能注释 (InterProScan)' : 'Protein domain annotation';
+            // Assembly & annotation
+            if (head === 'spades' || head === 'spades.py') return zh ? '基因组组装 (SPAdes)' : 'Genome assembly (SPAdes)';
+            if (head === 'flye')      return zh ? '长读长基因组组装 (Flye)' : 'Long-read genome assembly';
+            if (head === 'canu')      return zh ? '基因组组装 (Canu)' : 'Genome assembly (Canu)';
+            if (head === 'trinity' || head === 'Trinity') return zh ? '转录组组装' : 'Transcriptome assembly';
+            if (head === 'prokka')    return zh ? '细菌基因组注释' : 'Prokaryote annotation';
+            if (head === 'busco')     return zh ? '评估基因组完整性 (BUSCO)' : 'Genome completeness assessment';
+            // R / Rscript
+            if (head === 'Rscript' || head === 'R') {
+              if (/deseq/i.test(cmd))  return zh ? '差异表达分析 (DESeq2)' : 'Differential expression (DESeq2)';
+              if (/edger/i.test(cmd))  return zh ? '差异表达分析 (edgeR)' : 'Differential expression (edgeR)';
+              if (/seurat/i.test(cmd)) return zh ? '单细胞分析 (Seurat)' : 'Single-cell analysis (Seurat)';
+              if (/limma/i.test(cmd))  return zh ? '差异表达分析 (limma)' : 'Differential expression (limma)';
+              return zh ? '运行 R 统计分析' : 'Running R analysis';
+            }
+            // Workflows
+            if (head === 'nextflow') return zh ? '运行 Nextflow 流程' : 'Running Nextflow workflow';
+            if (head === 'snakemake') return zh ? '运行 Snakemake 流程' : 'Running Snakemake workflow';
+            if (head === 'cwltool')   return zh ? '运行 CWL 流程' : 'Running CWL workflow';
+            if (head === 'make')      return zh ? '编译 / 运行 Makefile' : 'Running Makefile';
+            // Network
+            if (head === 'curl' || head === 'wget') {
+              var urlMatch = cmd.match(/https?:\/\/[^\s'"]+/);
+              return urlMatch ? (zh ? '从 ' : 'Downloading from ') + siteToFriendly(hostname(urlMatch[0])) + (zh ? ' 下载数据' : '') : (zh ? '下载数据' : 'Downloading data');
+            }
+            if (head === 'rsync' || head === 'scp') return zh ? '同步/传输文件' : 'Transferring files';
+            if (head === 'git') {
+              var gitSub = (cmd.match(/git\s+(\w+)/) || [])[1] || '';
+              if (gitSub === 'clone')  return zh ? '克隆代码仓库' : 'Cloning repository';
+              if (gitSub === 'pull')   return zh ? '拉取最新代码' : 'Pulling latest code';
+              if (gitSub === 'commit') return zh ? '提交修改' : 'Committing changes';
+              return zh ? '使用 Git' : 'Running Git';
+            }
+            // Python / Python libs heuristics
+            if (head === 'python3' || head === 'python') {
+              if (/seaborn|matplotlib|sns\.|plt\.|heatmap|barplot|histplot|lineplot|scatter/.test(cmd)) return zh ? '绘制图表' : 'Drawing a chart';
+              if (/pandas|pd\./.test(cmd)) return zh ? '分析表格数据' : 'Analyzing tabular data';
+              if (/biopython|from Bio\b/.test(cmd)) return zh ? '处理生物序列' : 'Processing biological sequences';
+              if (/scanpy|\bsc\./.test(cmd)) return zh ? '分析单细胞数据' : 'Analyzing single-cell data';
+              if (/anndata|\bad\./.test(cmd)) return zh ? '处理 AnnData 数据' : 'Working with AnnData';
+              if (/pydeseq|deseq/i.test(cmd)) return zh ? '差异表达分析 (PyDESeq2)' : 'Differential expression analysis';
+              if (/sklearn|scikit-learn/.test(cmd)) return zh ? '机器学习分析' : 'Machine learning analysis';
+              if (/scipy/.test(cmd)) return zh ? '科学计算 (SciPy)' : 'Scientific computing (SciPy)';
+              if (/statsmodels/.test(cmd)) return zh ? '统计建模' : 'Statistical modeling';
+              if (/rdkit/.test(cmd)) return zh ? '化学结构分析 (RDKit)' : 'Cheminformatics (RDKit)';
+              if (/numpy|\bnp\./.test(cmd)) return zh ? '数值计算 (NumPy)' : 'Numerical computing (NumPy)';
+              if (/requests|urllib|httpx/.test(cmd)) return zh ? '网络请求' : 'HTTP request';
+              if (/beautifulsoup|bs4|lxml/.test(cmd)) return zh ? '解析网页' : 'Parsing web content';
+              if (/pysam/.test(cmd)) return zh ? '读取 BAM/SAM 数据' : 'Reading BAM/SAM data';
+              var scriptMatch = cmd.match(/python3?\s+([^\s]+\.py)/);
+              if (scriptMatch) return (zh ? '运行分析脚本 ' : 'Running analysis script ') + basename(scriptMatch[1]);
+              return zh ? '用 Python 计算' : 'Running Python analysis';
+            }
+            if (head === 'jupyter')   return zh ? '启动 Jupyter 笔记本' : 'Launching Jupyter notebook';
+            if (head === 'pip3' || head === 'pip') return zh ? '准备分析工具' : 'Installing Python packages';
+            if (head === 'conda' || head === 'mamba') return zh ? '管理 Conda 环境' : 'Managing Conda env';
+            if (head === 'apt-get' || head === 'apt') return zh ? '安装系统组件' : 'Installing system packages';
+            // File system
+            if (head === 'ls')         return zh ? '查看当前文件' : 'Listing files';
+            if (head === 'tree')       return zh ? '查看目录结构' : 'Showing directory tree';
+            if (head === 'find')       return zh ? '查找文件' : 'Finding files';
+            if (head === 'cat' || head === 'less' || head === 'more') return (zh ? '查看文件 ' : 'Reading ') + basename(cmd.split(/\s+/)[1] || '');
+            if (head === 'head')       return (zh ? '查看文件开头 ' : 'Showing head of ') + basename(cmd.split(/\s+/)[1] || '');
+            if (head === 'tail')       return (zh ? '查看文件末尾 ' : 'Showing tail of ') + basename(cmd.split(/\s+/)[1] || '');
+            if (head === 'wc')         return zh ? '统计文件行数/大小' : 'Counting lines/size';
+            if (head === 'mkdir')      return zh ? '创建文件夹' : 'Creating a folder';
+            if (head === 'rm' || head === 'rmdir') return zh ? '删除文件' : 'Removing files';
+            if (head === 'cp')         return zh ? '复制文件' : 'Copying files';
+            if (head === 'mv')         return zh ? '移动/重命名文件' : 'Moving / renaming files';
+            if (head === 'ln')         return zh ? '创建软链接' : 'Creating symlink';
+            if (head === 'chmod' || head === 'chown') return zh ? '修改文件权限' : 'Changing file permissions';
+            if (head === 'df' || head === 'du') return zh ? '查看磁盘占用' : 'Checking disk usage';
+            if (head === 'tar' || head === 'gzip' || head === 'gunzip' || head === 'unzip' || head === 'zip' || head === 'bzip2' || head === '7z' || head === 'xz') {
+              return zh ? '压缩 / 解压文件' : 'Compressing / extracting files';
+            }
+            if (head === 'echo')       return zh ? '写入文本' : 'Writing text';
+            if (head === 'which' || head === 'command' || head === 'whereis') return (zh ? '检查工具 ' : 'Checking for ') + (cmd.split(/\s+/)[1] || '');
+            if (head === 'env' || head === 'export' || head === 'printenv') return zh ? '检查环境变量' : 'Inspecting environment';
+            // Text manipulation
+            if (head === 'awk' || head === 'sed' || head === 'grep' || head === 'cut' || head === 'sort' || head === 'uniq' || head === 'tr' || head === 'paste' || head === 'join' || head === 'comm') {
+              return zh ? '处理文本数据' : 'Processing text data';
+            }
+            if (head === 'jq')   return zh ? '处理 JSON 数据' : 'Processing JSON data';
+            if (head === 'yq')   return zh ? '处理 YAML 数据' : 'Processing YAML data';
+            if (head === 'xargs') return zh ? '批量执行命令' : 'Running commands in batch';
+            // ── Generic fallback: extract URL or file argument ──
+            // For unknown commands, try to describe by destination URL or by file kind
+            // before falling back to the raw command string.
+            var urlInCmd = (cmd.match(/https?:\/\/[^\s'"]+/) || [])[0];
+            if (urlInCmd) {
+              return (zh ? '访问 ' : 'Visiting ') + siteToFriendly(hostname(urlInCmd));
+            }
+            var fileInCmd = (cmd.match(/[\w./-]+\.(fasta|fa|fna|faa|fastq|fq|sam|bam|cram|vcf|bcf|gff3?|gtf|bed|h5ad|loom|h5|hdf5|mtx|nwk|tree|pdb|cif|csv|tsv|xlsx?|parquet|npy|npz|pkl|pickle|png|jpe?g|svg|pdf|docx?|py|ipynb|r|rmd|sh|md|json|yaml|yml)(\.gz|\.bz2|\.xz)?\b/i) || [])[0];
+            if (fileInCmd) {
+              return (zh ? '处理' : 'Working with ') + fileKind(fileInCmd) + ' ' + basename(fileInCmd);
+            }
+            return (zh ? '运行命令: ' : 'Running: ') + clip(cmd, 50);
+          }
+          case 'WebSearch':
+            return (zh ? '在网上查找资料: ' : 'Searching the web for: ') + '"' + clip(input.query || '', 70) + '"';
+          case 'WebFetch':
+            return (zh ? '查阅 ' : 'Looking up ') + siteToFriendly(hostname(input.url || ''));
+          case 'Read':
+            return (zh ? '查看' : 'Reading ') + fileKind(input.file_path || input.path || '') + ' ' + basename(input.file_path || input.path || '');
+          case 'Write':
+            return (zh ? '生成' : 'Creating ') + fileKind(input.file_path || input.path || '') + ' ' + basename(input.file_path || input.path || '');
+          case 'Edit':
+            return (zh ? '修改' : 'Editing ') + fileKind(input.file_path || input.path || '') + ' ' + basename(input.file_path || input.path || '');
+          case 'NotebookEdit':
+            return zh ? '更新分析笔记本' : 'Updating analysis notebook';
+          case 'Glob':
+            return (zh ? '查找相关文件: ' : 'Looking for files: ') + '"' + clip(input.pattern || '', 50) + '"';
+          case 'Grep':
+            return (zh ? '在文件中搜索: ' : 'Searching files for: ') + '"' + clip(input.pattern || '', 50) + '"';
+          case 'Task':
+            return clip(input.description || input.prompt || (zh ? '执行子任务' : 'Running a subtask'), 110);
+          case 'TodoWrite':
+            return zh ? '更新任务清单' : 'Updating to-do list';
+          case 'ToolSearch':
+            return (zh ? '查找可用工具: ' : 'Looking up tools: ') + '"' + clip(input.query || '', 50) + '"';
+          case 'Skill':
+            return (zh ? '使用技能 ' : 'Using skill ') + clip(input.skill || input.name || '', 60);
+          case 'SendMessage':
+            return zh ? '向用户发送消息' : 'Sending a message to chat';
+          case 'SendImage':
+            return (zh ? '发送图片 ' : 'Sending image ') + basename(input.file_path || '');
+          case 'ScheduleTask':
+            return zh ? '安排定时任务' : 'Scheduling a task';
+          default: {
+            if (name.indexOf('mcp__') === 0) {
+              return (zh ? '调用工具 ' : 'Using tool ') + name.replace(/^mcp__/, '').replace(/__/g, '/');
+            }
+            var firstVal = '';
+            for (var k in input) {
+              if (input.hasOwnProperty(k) && typeof input[k] === 'string' && input[k]) { firstVal = input[k]; break; }
+            }
+            return (zh ? '执行 ' : 'Doing ') + name + (firstVal ? ': ' + clip(firstVal, 60) : '');
+          }
+        }
+      }
+      return null;
+    }
+
     function traceTypeTitle(type, t) {
       switch (type) {
         case 'run_start': return t.evtRunStart;
@@ -804,6 +1188,47 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
       }).join('') + '</div>';
     }
 
+    /**
+     * Pair raw trace events: drop a thinking event when the next event is a
+     * tool_use, and stash the thinking text on the tool_use event as
+     * `_thinkingPreview` so renderProcessStep can use it as the description.
+     */
+    function pairThinkingWithToolEvents(events) {
+      var out = [];
+      var pendingThinkingText = null;
+      for (var i = 0; i < events.length; i++) {
+        var e = events[i];
+        if (e.type === 'agent_thinking') {
+          var p = traceParsedPayload(e.payload);
+          if (p && p.text) pendingThinkingText = p.text;
+          // In compact mode the thinking will be hidden anyway, but always drop
+          // it from the rendered list when paired — it lives on the next tool now.
+          // If it ends up not being paired, push it back at flush time.
+          continue;
+        }
+        if (e.type === 'agent_tool_use' && pendingThinkingText) {
+          // Shallow clone so we don't mutate the cached event row
+          var cloned = {};
+          for (var k in e) if (e.hasOwnProperty(k)) cloned[k] = e[k];
+          cloned._thinkingPreview = pendingThinkingText;
+          pendingThinkingText = null;
+          out.push(cloned);
+          continue;
+        }
+        // Not a tool — flush any pending thinking back into the stream
+        if (pendingThinkingText) {
+          // Synthesize a thinking event so it still renders
+          out.push({ type: 'agent_thinking', payload: JSON.stringify({ text: pendingThinkingText }) });
+          pendingThinkingText = null;
+        }
+        out.push(e);
+      }
+      if (pendingThinkingText) {
+        out.push({ type: 'agent_thinking', payload: JSON.stringify({ text: pendingThinkingText }) });
+      }
+      return out;
+    }
+
     function renderProcessStep(r, t) {
       var parsed = traceParsedPayload(r.payload);
       var cls = pstepIconClass(r.type);
@@ -813,10 +1238,17 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
       var time = r.created_at ? new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
       if (r.type === 'agent_thinking' && parsed) {
-        label = t.evtThinking;
+        // Show natural-language summary of the thinking; full text only in Full mode.
+        var thinkSummary = humanizeStep('thinking', null, null, parsed.text || '');
+        label = '<span class="pstep-natural">' + esc(thinkSummary || t.evtThinking) + '</span>';
         detail = parsed.text || '';
       } else if (r.type === 'agent_tool_use' && parsed) {
-        label = '<span class="pstep-tool-name">' + esc(String(parsed.toolName || '')) + '</span>';
+        var rawInput = parsed.toolInputFull || parsed.toolInput;
+        // Use rule-based humanize only — the LLM's own thinking text is too often
+        // pessimistic ("it seems X is not available") to make a good summary.
+        var toolSummary = humanizeStep('tool', parsed.toolName, rawInput, null);
+        label = '<span class="pstep-tool-name">' + esc(String(parsed.toolName || '')) + '</span>' +
+                (toolSummary ? '<span class="pstep-natural"> · ' + esc(toolSummary) + '</span>' : '');
         detail = parsed.toolInput || '';
       } else if (r.type === 'container_spawn' && parsed) {
         label = t.evtContainer;
@@ -890,11 +1322,13 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
 
         html += '<div class="response-bubble">';
 
-        // Process steps (collapsible)
+        // Process steps (collapsible) — pair thinking with the next tool_use so
+        // the agent's own reasoning becomes the natural-language description.
         if (bub.process.length > 0) {
+          var processEvents = pairThinkingWithToolEvents(bub.process);
           var stepsHtml = '';
-          for (var p = 0; p < bub.process.length; p++) {
-            stepsHtml += renderProcessStep(bub.process[p], t);
+          for (var p = 0; p < processEvents.length; p++) {
+            stepsHtml += renderProcessStep(processEvents[p], t);
           }
           var processLabel = bub.process.length + (bub.process.length === 1 ? ' step' : ' steps');
           html += '<details class="process-steps"' + (isLastBubble && !bub.output ? ' open' : '') + '>';
@@ -1152,11 +1586,37 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
     // Sync initial UI state from stored value
     (function () { applyTraceMode(traceShowStream); })();
 
-    langBtn.addEventListener('click', function () {
-      applyLang(lang === 'zh' ? 'en' : 'zh');
+    // New segmented language toggle (中 / EN). Highlights the current language.
+    var langBtnZh = document.getElementById('langBtnZh');
+    var langBtnEn = document.getElementById('langBtnEn');
+    function syncLangToggle() {
+      if (langBtnZh) {
+        langBtnZh.classList.toggle('is-active', lang === 'zh');
+        langBtnZh.setAttribute('aria-pressed', String(lang === 'zh'));
+      }
+      if (langBtnEn) {
+        langBtnEn.classList.toggle('is-active', lang === 'en');
+        langBtnEn.setAttribute('aria-pressed', String(lang === 'en'));
+      }
+    }
+    function pickLang(target) {
+      if (target === lang) return;
+      applyLang(target);
+      syncLangToggle();
       lastSignature = '';
       refreshMessages();
-    });
+    }
+    if (langBtnZh) langBtnZh.addEventListener('click', function () { pickLang('zh'); });
+    if (langBtnEn) langBtnEn.addEventListener('click', function () { pickLang('en'); });
+    syncLangToggle();
+    if (langBtn) {
+      langBtn.addEventListener('click', function () {
+        applyLang(lang === 'zh' ? 'en' : 'zh');
+        syncLangToggle();
+        lastSignature = '';
+        refreshMessages();
+      });
+    }
 
     function currentTheme() {
       var tt = document.documentElement.getAttribute('data-theme') || 'default';
@@ -1729,13 +2189,26 @@ const THEMES = ['default', 'ocean', 'sakura', 'cream', 'mono-light', 'midnight',
             var contentEl = streamingBubble.querySelector('.content');
             if (contentEl) {
               var html = '';
-              // Process steps strip — visually distinct block ("Process") with timeline-style cards
+              // Process steps strip — render each step as a one-line natural-language task.
+              // We PAIR a "thinking" step with the next "tool" step: the agent's own
+              // reasoning is the most accurate human-friendly description of what's
+              // about to happen ("Let me search PubMed for Stella-Blimp1" + WebFetch
+              // call → just show the thinking sentence). This avoids a second LLM call.
               if (steps.length) {
-                var stepCards = steps.slice(-6).map(function (s) {
-                  if (s.kind === 'thinking') return '<div class="ss-step ss-think"><span class="ss-icon">💭</span><span class="ss-text">' + esc(truncateText(s.detail, 160)) + '</span></div>';
-                  if (s.kind === 'tool') return '<div class="ss-step ss-tool"><span class="ss-icon">⚙</span><span class="ss-text"><b>' + esc(s.label) + '</b>' + (s.detail ? ' <code>' + esc(truncateText(s.detail, 80)) + '</code>' : '') + '</span></div>';
-                  if (s.kind === 'spawn') return '<div class="ss-step ss-spawn"><span class="ss-icon">▶</span><span class="ss-text">' + esc(s.detail) + '</span></div>';
-                  if (s.kind === 'ipc') return '<div class="ss-step ss-ipc"><span class="ss-icon">↗</span><span class="ss-text">' + esc(truncateText(s.detail, 100)) + '</span></div>';
+                // Pair thinking with the next tool — but only to DROP the redundant
+                // thinking step. The tool description itself comes from rule-based
+                // humanizeStep (LLM thinking text is often too pessimistic).
+                var paired = pairThinkingWithTool(steps);
+                var stepCards = paired.slice(-6).map(function (s) {
+                  if (s.kind === 'thinking') {
+                    return '<div class="ss-step ss-think"><span class="ss-icon">💭</span><span class="ss-text">' + esc(lang === 'zh' ? '思考中…' : 'Thinking…') + '</span></div>';
+                  }
+                  if (s.kind === 'tool') {
+                    var toolSummary = humanizeStep('tool', s.label, s.detail, null) || s.label;
+                    return '<div class="ss-step ss-tool"><span class="ss-icon">⚙</span><span class="ss-text">' + esc(toolSummary) + '</span></div>';
+                  }
+                  if (s.kind === 'spawn') return '<div class="ss-step ss-spawn"><span class="ss-icon">▶</span><span class="ss-text">Container started</span></div>';
+                  if (s.kind === 'ipc') return '<div class="ss-step ss-ipc"><span class="ss-icon">↗</span><span class="ss-text">Sent to chat</span></div>';
                   return '<div class="ss-step"><span class="ss-icon">·</span><span class="ss-text">' + esc(truncateText(s.detail || s.label, 100)) + '</span></div>';
                 }).join('');
                 html += '<details class="streaming-process" open>' +
