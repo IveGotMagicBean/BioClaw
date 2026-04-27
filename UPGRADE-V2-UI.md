@@ -18,14 +18,14 @@
 
 | 文件 | 改动 | 说明 |
 |------|------|------|
-| `src/channels/local-web/channel.ts` | +5 行 | 添加 `/v2` 路由 |
+| `src/channels/local-web/channel.ts` | +5 行 | `/` 默认指向 V2，原版迁到 `/v1`，`/v2` 保留为别名 |
 | `container/agent-runner/src/index.ts` | ~160 行 | OpenAI 兼容接口支持 SSE 流式输出；thinking/tool_use 步骤推到 trace |
 | `src/index.ts` | +8 行 | 跳过 streaming chunks 不推送到聊天 |
 | `src/container-runner.ts` | +1 行 | `ContainerOutput.status` 新增 `'streaming'` 类型 |
 
 ### 不受影响的内容
 
-- 原版 UI（`http://localhost:3000/`）完全不变
+- 原版 UI 仍可用，仅路由从 `/` 换成 `/v1`（页面与数据完全不变）
 - 所有聊天记录、会话、群组配置不受影响
 - WhatsApp / 微信 / 飞书等其他 channel 不受影响
 - `.env` 文件不会被覆盖
@@ -54,8 +54,8 @@ npm run web
 ```
 
 启动后：
-- 原版 UI：`http://localhost:3000/`
-- V2 UI：`http://localhost:3000/v2`
+- V2 UI（默认）：`http://localhost:3000/`（也可走 `/v2`）
+- 原版 UI：`http://localhost:3000/v1`
 
 ---
 
@@ -94,7 +94,7 @@ git merge v2/main
 npm run stop:web && npm run web
 ```
 
-完成。访问 `http://localhost:3000/v2` 使用新界面，原版 `http://localhost:3000/` 不变。
+完成。`http://localhost:3000/` 默认就是新版 V2 UI，原版迁到 `http://localhost:3000/v1`（数据不变）。
 
 ---
 
