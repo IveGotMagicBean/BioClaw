@@ -44,7 +44,7 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'streaming';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -691,8 +691,9 @@ function buildGlobalSystemPrompt(
   );
   const routingBlock = taskRouting?.systemBlock || '';
   const workdirBlock = `\n\n[Current working directory]\n${currentWorkdir}\n`;
+  const languageBlock = `\n\n[Language policy]\nDetect the language the user is writing in and reply in the same language. If the user writes in Chinese, reply in Chinese; if in English, reply in English; otherwise mirror their language. This applies to both your final answer and any "send_message" / progress updates. Tool inputs (commands, file paths, code) stay in their natural form (English/code).\n`;
 
-  return bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + routingBlock + workdirBlock;
+  return bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + routingBlock + workdirBlock + languageBlock;
 }
 
 function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
@@ -1409,40 +1410,176 @@ async function executeOpenAIToolCall(
 async function callOpenAICompatibleApi(
   providerConfig: ProviderConfig,
   messages: OpenAIChatMessage[],
-) {
+  onChunk?: (partialText: string) => void,
+): Promise<any> {
   if (!providerConfig.apiKey || !providerConfig.baseUrl || !providerConfig.model) {
     throw new Error('OpenAI-compatible provider is missing apiKey, baseUrl, or model');
   }
 
   const baseUrl = providerConfig.baseUrl.replace(/\/+$/, '');
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${providerConfig.apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://github.com/Runchuan-BU/BioClaw',
-      'X-Title': 'BioClaw',
-    },
-    body: JSON.stringify({
-      model: providerConfig.model,
-      messages,
-      tools: getOpenAICompatibleTools(),
-      tool_choice: 'auto',
-      temperature: 0.2,
-    }),
+  const useStream = !!onChunk;
+
+  // Retry on transient network errors (ECONNRESET, fetch failed) with exponential
+  // backoff. DashScope/qwen sometimes resets connections under load — without
+  // retries, the whole agent run fails on the first hiccup.
+  const MAX_RETRIES = 4;
+  const requestBody = JSON.stringify({
+    model: providerConfig.model,
+    messages,
+    tools: getOpenAICompatibleTools(),
+    tool_choice: 'auto',
+    temperature: 0.2,
+    stream: useStream,
   });
+  let response: Response | null = null;
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${providerConfig.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/Runchuan-BU/BioClaw',
+          'X-Title': 'BioClaw',
+        },
+        body: requestBody,
+      });
+      break;
+    } catch (fetchErr) {
+      lastErr = fetchErr;
+      const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+      const isLast = attempt === MAX_RETRIES - 1;
+      if (isLast) break;
+      const delayMs = 500 * Math.pow(2, attempt);   // 500ms, 1s, 2s, 4s
+      log(`Provider fetch failed (${errMsg}), retry ${attempt + 1}/${MAX_RETRIES - 1} in ${delayMs}ms`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  if (!response) {
+    if (useStream) {
+      log(`All ${MAX_RETRIES} streaming attempts failed; falling back to non-streaming`);
+      return callOpenAICompatibleApi(providerConfig, messages);
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
 
-  const data = await response.json() as OpenAIChatResponse;
   if (!response.ok) {
-    throw new Error(data.error?.message || `Provider request failed with status ${response.status}`);
+    // Error responses aren't SSE, parse as JSON
+    const errData = await response.json().catch(() => ({})) as OpenAIChatResponse;
+    throw new Error(errData.error?.message || `Provider request failed with status ${response.status}`);
   }
 
-  const message = data.choices?.[0]?.message;
-  if (!message) {
-    throw new Error('Provider returned no message choices');
+  if (!useStream) {
+    const data = await response.json() as OpenAIChatResponse;
+    const message = data.choices?.[0]?.message;
+    if (!message) throw new Error('Provider returned no message choices');
+    return message;
   }
 
-  return message;
+  // Streaming SSE parse
+  if (!response.body) throw new Error('Streaming response has no body');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let accumulatedText = '';
+  const aggregatedToolCalls: Record<number, { id?: string; type?: string; function: { name?: string; arguments?: string } }> = {};
+  let lastEmitAt = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Split on \n\n (SSE event boundary)
+      let sepIdx;
+      while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
+        const rawEvent = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+        for (const line of rawEvent.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          let evt: { choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; type?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string | null }> };
+          try { evt = JSON.parse(payload); } catch { continue; }
+          const delta = evt.choices?.[0]?.delta;
+          if (!delta) continue;
+          if (typeof delta.content === 'string' && delta.content.length) {
+            accumulatedText += delta.content;
+            const now = Date.now();
+            if (onChunk && (now - lastEmitAt >= 60)) {
+              lastEmitAt = now;
+              try { onChunk(accumulatedText); } catch { /* ignore */ }
+            }
+          }
+          if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              const slot = aggregatedToolCalls[idx] ?? { function: { name: '', arguments: '' } };
+              if (tc.id) slot.id = tc.id;
+              if (tc.type) slot.type = tc.type;
+              if (tc.function?.name) slot.function.name = (slot.function.name || '') + tc.function.name;
+              if (tc.function?.arguments) slot.function.arguments = (slot.function.arguments || '') + tc.function.arguments;
+              aggregatedToolCalls[idx] = slot;
+            }
+          }
+        }
+      }
+    }
+  } catch (streamErr) {
+    log(`Stream interrupted (${streamErr instanceof Error ? streamErr.message : String(streamErr)}); falling back to non-streaming retry`);
+    return callOpenAICompatibleApi(providerConfig, messages);
+  }
+
+  // Final flush
+  if (onChunk && accumulatedText) {
+    try { onChunk(accumulatedText); } catch { /* ignore */ }
+  }
+
+  const toolCalls = Object.keys(aggregatedToolCalls)
+    .sort((a, b) => Number(a) - Number(b))
+    .map(k => aggregatedToolCalls[Number(k)])
+    .filter(tc => tc.function.name)
+    .map(tc => {
+      // Streaming SSE delivers arguments as fragments; if assembly produced
+      // invalid/empty JSON the next API call will be rejected with
+      // `function.arguments parameter must be in JSON format`. Normalize to '{}'
+      // when the assembled string isn't a parseable JSON object.
+      const argsRaw = (tc.function.arguments || '').trim();
+      let args = argsRaw;
+      if (!args) {
+        args = '{}';
+      } else {
+        try { JSON.parse(args); }
+        catch { args = '{}'; }
+      }
+      return {
+        id: tc.id || '',
+        type: 'function' as const,
+        function: {
+          name: tc.function.name || '',
+          arguments: args,
+        },
+      };
+    });
+
+  // If we ended up with tool_calls whose arguments all degraded to '{}' (likely
+  // because streaming was truncated mid-flight), retry without streaming so the
+  // model returns a clean, complete response.
+  if (toolCalls.length && useStream) {
+    const allEmpty = toolCalls.every(tc => tc.function.arguments === '{}');
+    if (allEmpty) {
+      log('Streaming produced empty/invalid tool_call arguments; retrying without stream');
+      return callOpenAICompatibleApi(providerConfig, messages);
+    }
+  }
+
+  return {
+    role: 'assistant' as const,
+    content: accumulatedText || null,
+    tool_calls: toolCalls.length ? toolCalls : undefined,
+  };
 }
 
 async function runOpenAICompatibleConversation(
@@ -1471,7 +1608,19 @@ async function runOpenAICompatibleConversation(
   let toolIterations = 0;
   while (toolIterations < OPENAI_TOOL_MAX_ITERATIONS) {
     toolIterations += 1;
-    const assistantMessage = await callOpenAICompatibleApi(providerConfig, messages);
+    // Pipe every streamed chunk back as a writeOutput so the orchestrator
+    // records a stream_output trace event and the UI sees progressive text.
+    const assistantMessage = await callOpenAICompatibleApi(
+      providerConfig,
+      messages,
+      (partial) => {
+        writeOutput({
+          status: 'streaming',
+          result: partial,
+          newSessionId,
+        });
+      },
+    );
 
     messages.push({
       role: 'assistant',

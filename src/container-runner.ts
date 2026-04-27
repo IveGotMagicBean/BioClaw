@@ -57,7 +57,7 @@ export interface ContainerInput {
 }
 
 export interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'streaming';
   result: string | null;
   newSessionId?: string;
   error?: string;

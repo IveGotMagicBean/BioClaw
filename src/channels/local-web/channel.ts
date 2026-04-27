@@ -311,7 +311,12 @@ export class LocalWebChannel implements Channel {
       return;
     }
 
-    if (req.method === 'GET' && url.pathname === '/') {
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/v2')) {
+      this.serveStaticAsset('/assets/v2/index.html', res);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1') {
       this.serveStaticAsset('/assets/index.html', res);
       return;
     }

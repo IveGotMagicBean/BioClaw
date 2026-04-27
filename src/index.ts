@@ -353,6 +353,12 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
 
   const nbPrompt = missedMessages.map((m) => m.content).join('\n\n');
   const output = await runAgent(group, agentId, agentPrompt, replyChatJid, async (result) => {
+    // Streaming chunks only feed the trace/SSE preview — don't push partial
+    // messages to the chat. Wait for the final success chunk.
+    if (result.status === 'streaming') {
+      resetIdleTimer();
+      return;
+    }
     if (result.result) {
       const raw = typeof result.result === 'string'
         ? result.result
@@ -422,7 +428,7 @@ async function runAgent(
         recordAgentTraceEvent({
           group_folder: workspaceFolder, chat_jid: chatJid,
           session_id: getSessions()[agentId] ?? null, type: 'stream_output',
-          payload: { status: out.status, resultLength: r.length, preview: r.replace(/<internal>[\s\S]*?<\/internal>/g, '').slice(0, 800), newSessionId: out.newSessionId ?? null },
+          payload: { status: out.status, resultLength: r.length, preview: r.replace(/<internal>[\s\S]*?<\/internal>/g, '').slice(0, 8000), newSessionId: out.newSessionId ?? null },
         });
         await onOutput(out);
       }
